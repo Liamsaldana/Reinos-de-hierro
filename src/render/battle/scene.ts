@@ -160,9 +160,9 @@ export class BattleScene extends Phaser.Scene {
       if (cell.blocked && cell.terrain !== 'rio') base = lightenNum(base, 0.02);
 
       g.fillStyle(base, 1);
-      g.fillPoints(corners as Phaser.Geom.Point[], true);
+      g.fillPoints(corners as unknown as Phaser.Math.Vector2[], true);
       g.lineStyle(1, strokeNum, 0.5);
-      g.strokePoints(corners as Phaser.Geom.Point[], true, true);
+      g.strokePoints(corners as unknown as Phaser.Math.Vector2[], true, true);
 
       if (cell.terrain === 'bosque') {
         const c = this.layout.toPixel(cell.coord);
@@ -383,9 +383,9 @@ export class BattleScene extends Phaser.Scene {
     for (const m of moves) {
       const corners = this.layout.corners(m);
       g.fillStyle(CANVAS.parchment, 0.15);
-      g.fillPoints(corners as Phaser.Geom.Point[], true);
+      g.fillPoints(corners as unknown as Phaser.Math.Vector2[], true);
       g.lineStyle(1, CANVAS.parchment, 0.4);
-      g.strokePoints(corners as Phaser.Geom.Point[], true, true);
+      g.strokePoints(corners as unknown as Phaser.Math.Vector2[], true, true);
     }
 
     const mode = this.host.boardMode();
