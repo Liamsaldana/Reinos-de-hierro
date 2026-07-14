@@ -6,9 +6,11 @@ import './base.css';
 import { store } from './core/state/store';
 import { WorldScene } from './render/world/scene';
 import { initUI } from './render/ui/ui';
+import { Minimap } from './render/minimap/minimap';
 import type { GameState } from './core/types';
 
 let world: WorldScene | null = null;
+let minimap: Minimap | null = null;
 const appEl = document.getElementById('app');
 if (!appEl) throw new Error('Falta #app en index.html');
 
@@ -26,6 +28,7 @@ store.subscribe((state, ev) => {
     case 'state-replaced':
       ensureWorld(state);
       world!.refresh();
+      if (!minimap) minimap = new Minimap(store, () => world);
       break;
     case 'turn-ended':
     case 'battle':

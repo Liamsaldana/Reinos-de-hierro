@@ -7,7 +7,7 @@ import type {
   Army, ArmyId, GameState, Province, ProvinceId, Selection, UnitCost, UnitType, WorldBridge,
 } from '../../core/types';
 import { recruitUnit, moveArmy, legalMoves } from '../../core/systems/actions';
-import { unitTypesFor } from '../../core/content/units';
+import { unitTypesFor, getUnitType } from '../../core/content/units';
 import { armyStrength } from '../../core/combat/autoresolve';
 import { el, fmt, clear, replaceChildren, type Child } from './dom';
 import {
@@ -152,11 +152,12 @@ export function createLeftPanel(
 
     function unitRow(u: Army['units'][number]): HTMLElement {
       let name = u.typeId;
-      let moraleMax = 1;
+      let moraleMax = Math.max(u.morale, 1);
       try {
-        const t = unitTypesFor(faction?.cultureId ?? 'aurelios').find(x => x.id === u.typeId);
-        if (t) { name = t.name; moraleMax = t.moraleMax; }
-      } catch { /* banco de unidades aún sin datos */ }
+        const t = getUnitType(u.typeId);
+        name = t.name;
+        moraleMax = t.moraleMax;
+      } catch { /* banco de unidades aún sin datos (stub en paralelo) */ }
       const pct = moraleMax > 0 ? Math.max(0, Math.min(100, (u.morale / moraleMax) * 100)) : 0;
       return el('div', { className: 'unit-row' }, [
         el('span', { className: 'unit-row__name' }, [name]),
