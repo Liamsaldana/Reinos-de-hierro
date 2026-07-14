@@ -8,6 +8,7 @@ import { WorldScene } from './render/world/scene';
 import { initUI } from './render/ui/ui';
 import { Minimap } from './render/minimap/minimap';
 import { initEventFlow } from './game/eventFlow';
+import { initCastleFlow } from './game/castleFlow';
 import type { GameState } from './core/types';
 
 let world: WorldScene | null = null;
@@ -47,3 +48,4 @@ store.subscribe((state, ev) => {
 
 initUI(store, () => world);
 initEventFlow(store);
+initCastleFlow(store);

@@ -1,52 +1,42 @@
 /**
  * WorldScene — escena Three.js del mapa estratégico 3D (GDD §4.1).
- * Dirección de arte "cartografía antigua sobre mesa de guerra": terreno con
- * relieve, capa política de provincias, estandartes heráldicos y gallardetes de
- * ejército como billboards. Lee GameState (solo lectura) y emite selección.
+ * Dirección de arte "mapa político sobre mesa de guerra": un CONTINENTE de silueta
+ * real sobre mar profundo, relieve con bosques/rocas/nieve, CASTILLOS low-poly como
+ * sedes de poder, bordes de reino que hablan (color del dueño, halo del jugador,
+ * pulso de guerra), rótulos de región/provincia con LOD y flechas de ruta.
  *
- * Frontera de módulos: este archivo solo importa `three`, el contrato de tipos
- * del core y el RNG visual. Nunca importa UI ni sistemas del core.
+ * Frontera de módulos: solo importa `three`, el contrato de tipos del core y el
+ * RNG visual (vía submódulos del renderer). Nunca importa UI ni sistemas del core.
+ *
+ * API PÚBLICA ESTABLE (main.ts + minimapa dependen de ella): constructor,
+ * onSelect, setState, refresh, focusProvince, setMoveTargets, setSelected, dispose.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type {
-  GameState,
-  Province,
-  ProvinceId,
-  ArmyId,
-  Selection,
-  WorldBridge,
+  GameState, Province, ProvinceId, ArmyId, FactionId, Selection, WorldBridge,
 } from '../../core/types';
 import { buildTerrain, type TerrainBuild } from './terrain';
-import { ProvinceOverlay } from './overlays';
-import { makeShieldCanvas, makeMojonCanvas, makeArmyCanvas, abbrevMen } from './heraldry';
+import { LandField } from './landfield';
+import { ProvinceOverlay, type NeighborCenter } from './overlays';
+import { buildFlora, type FloraBuild } from './flora';
+import { buildCastles, type CastleBuild } from './castles';
+import { LabelLayer } from './labels';
+import { buildArmyMarker, type ArmyMarker } from './armyMarker';
+import { buildRoutes, type RoutesBuild, type RouteTarget } from './routes';
+import { makeShieldCanvas, abbrevMen } from './heraldry';
 import { ART } from './palette';
 
-const SHIELD_W: Record<1 | 2 | 3 | 4, number> = { 1: 3.0, 2: 3.6, 3: 4.3, 4: 5.4 };
+const SHIELD_W: Record<1 | 2 | 3 | 4, number> = { 1: 1.7, 2: 2.0, 3: 2.4, 4: 3.0 };
 const SHIELD_ASPECT = 320 / 256;
-const MOJON_W = 2.2;
-const MOJON_ASPECT = 160 / 128;
-const ARMY_W = 5.2;
-const ARMY_ASPECT = 160 / 224;
-const ARMY_SEL_SCALE = 1.18;
+const CLICK_SLOP = 6;
+/** distancia de cámara por encima de la cual se ocultan castillos/flora (LOD). */
+const DETAIL_MAX_DIST = 140;
 
-const CLICK_SLOP = 6; // px máximos entre pointerdown y pointerup para contar como clic
-
-interface ArmyRecord {
-  sprite: THREE.Sprite;
-  texKey: string;
-}
-interface FocusTween {
-  fromX: number;
-  fromZ: number;
-  toX: number;
-  toZ: number;
-  start: number;
-  dur: number;
-}
+interface ArmyRecord { marker: ArmyMarker; texKey: string; provinceId: ProvinceId }
+interface FocusTween { fromX: number; fromZ: number; toX: number; toZ: number; start: number; dur: number }
 
 export class WorldScene implements WorldBridge {
-  /** click en provincia/ejército (null = click al vacío). */
   onSelect: ((sel: Selection) => void) | null = null;
 
   private readonly container: HTMLElement;
@@ -61,21 +51,28 @@ export class WorldScene implements WorldBridge {
   private readonly maxAniso: number;
   private readonly reducedMotion: boolean;
 
+  private field: LandField | null = null;
   private terrain: TerrainBuild | null = null;
+  private flora: FloraBuild | null = null;
+  private castles: CastleBuild | null = null;
+  private labels: LabelLayer | null = null;
+  private routes: RoutesBuild | null = null;
+  private sampleHeight: (x: number, z: number) => number = () => 0;
+
   private readonly overlays = new Map<ProvinceId, ProvinceOverlay>();
   private fillMeshes: THREE.Mesh[] = [];
-  private readonly settlementSprites = new Map<ProvinceId, THREE.Sprite>();
-  private readonly settlementSig = new Map<ProvinceId, string>();
-  private readonly armySprites = new Map<ArmyId, ArmyRecord>();
-  private armySpriteList: THREE.Sprite[] = [];
+  private readonly shieldSprites = new Map<ProvinceId, THREE.Sprite>();
+  private readonly shieldSig = new Map<ProvinceId, string>();
+  private readonly armies = new Map<ArmyId, ArmyRecord>();
+  private armyPickables: THREE.Object3D[] = [];
   private readonly textureCache = new Map<string, THREE.CanvasTexture>();
-  private readonly centerH = new Map<ProvinceId, number>();
   private readonly provinceById = new Map<ProvinceId, Province>();
 
   private hoveredId: ProvinceId | null = null;
   private selectedProvinceId: ProvinceId | null = null;
   private selectedArmyId: ArmyId | null = null;
   private readonly moveTargetIds = new Set<ProvinceId>();
+  private detailVisible = true;
 
   private focusTween: FocusTween | null = null;
   private downPos: { x: number; y: number } | null = null;
@@ -105,24 +102,26 @@ export class WorldScene implements WorldBridge {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(ART.background);
-    this.scene.fog = new THREE.Fog(ART.background, 130, 340);
+    this.scene.fog = new THREE.Fog(ART.background, 155, 400);
 
-    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 600);
-    this.camera.position.set(0, 95, 78);
+    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 700);
+    this.camera.position.set(0, 96, 84);
     this.camera.lookAt(0, 0, 0);
 
-    const ambient = new THREE.AmbientLight(new THREE.Color(ART.ambient), 0.8);
-    const sun = new THREE.DirectionalLight(new THREE.Color(ART.sun), 1.0);
-    sun.position.set(-70, 90, -50); // noroeste elevado
-    this.scene.add(ambient, sun);
+    const ambient = new THREE.AmbientLight(new THREE.Color(ART.ambient), 0.82);
+    const sun = new THREE.DirectionalLight(new THREE.Color(ART.sun), 1.05);
+    sun.position.set(-70, 96, -46);
+    const seaFill = new THREE.DirectionalLight(new THREE.Color('#2b3a44'), 0.35);
+    seaFill.position.set(60, 40, 70);
+    this.scene.add(ambient, sun, seaFill);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.screenSpacePanning = false;
-    this.controls.minDistance = 28;
-    this.controls.maxDistance = 170;
-    this.controls.minPolarAngle = 0.25;
-    this.controls.maxPolarAngle = 1.25;
+    this.controls.minDistance = 30;
+    this.controls.maxDistance = 175;
+    this.controls.minPolarAngle = 0.22;
+    this.controls.maxPolarAngle = 1.28;
     this.controls.target.set(0, 0, 0);
     this.controls.addEventListener('start', this.cancelFocus);
 
@@ -150,9 +149,11 @@ export class WorldScene implements WorldBridge {
   }
 
   refresh(): void {
-    this.refreshOverlayColors();
-    this.refreshSettlements();
+    this.rebuildBorders();
+    this.castles?.update(this.state, this.sampleHeight, (k, m) => this.texture(k, m));
+    this.refreshShields();
     this.refreshArmies();
+    this.rebuildRoutes();
   }
 
   focusProvince(id: ProvinceId): void {
@@ -177,12 +178,10 @@ export class WorldScene implements WorldBridge {
     if (ids) {
       for (const id of ids) {
         const ov = this.overlays.get(id);
-        if (ov) {
-          ov.moveTarget = true;
-          this.moveTargetIds.add(id);
-        }
+        if (ov) { ov.moveTarget = true; this.moveTargetIds.add(id); }
       }
     }
+    this.rebuildRoutes();
   }
 
   setSelected(sel: Selection): void {
@@ -191,20 +190,19 @@ export class WorldScene implements WorldBridge {
       if (prev) prev.selected = false;
     }
     this.selectedProvinceId = null;
-    if (this.selectedArmyId !== null) this.scaleArmy(this.selectedArmyId, false);
+    if (this.selectedArmyId !== null) this.armies.get(this.selectedArmyId)?.marker.setSelected(false);
     this.selectedArmyId = null;
 
-    if (!sel) return;
-    if (sel.kind === 'province') {
-      const ov = this.overlays.get(sel.id);
-      if (ov) {
-        ov.selected = true;
-        this.selectedProvinceId = sel.id;
+    if (sel) {
+      if (sel.kind === 'province') {
+        const ov = this.overlays.get(sel.id);
+        if (ov) { ov.selected = true; this.selectedProvinceId = sel.id; }
+      } else {
+        this.selectedArmyId = sel.id;
+        this.armies.get(sel.id)?.marker.setSelected(true);
       }
-    } else {
-      this.selectedArmyId = sel.id;
-      this.scaleArmy(sel.id, true);
     }
+    this.rebuildRoutes();
   }
 
   dispose(): void {
@@ -232,30 +230,51 @@ export class WorldScene implements WorldBridge {
   private buildMap(): void {
     this.clearMap();
 
-    this.terrain = buildTerrain(this.state.provinces, this.state.seed);
-    this.scene.add(this.terrain.mesh);
+    this.field = new LandField(this.state.provinces, this.state.seed);
+    this.terrain = buildTerrain(this.state.provinces, this.state.seed, this.field);
+    this.sampleHeight = this.terrain.sampleHeight;
+    for (const o of this.terrain.objects) this.scene.add(o);
 
-    for (const p of this.state.provinces) {
-      this.provinceById.set(p.id, p);
-      const ch = this.terrain.sampleHeight(p.center[0], p.center[1]);
-      this.centerH.set(p.id, ch);
-    }
+    for (const p of this.state.provinces) this.provinceById.set(p.id, p);
 
+    // overlays (con centros de vecinos para detectar aristas exteriores de reino)
+    const centerById = new Map<ProvinceId, [number, number]>();
+    for (const p of this.state.provinces) centerById.set(p.id, p.center);
     for (const p of this.state.provinces) {
-      const ch = this.centerH.get(p.id) ?? 0;
-      const ov = new ProvinceOverlay(p, ch, this.ownerColor(p));
+      const ch = this.sampleHeight(p.center[0], p.center[1]);
+      const neighbors: NeighborCenter[] = [];
+      for (const nid of p.neighbors) {
+        const c = centerById.get(nid);
+        if (c) neighbors.push({ id: nid, center: c });
+      }
+      const ov = new ProvinceOverlay(p, ch, this.ownerColor(p), neighbors);
       this.overlays.set(p.id, ov);
       for (const obj of ov.objects) this.scene.add(obj);
       this.fillMeshes.push(ov.fill);
     }
+
+    this.flora = buildFlora(this.state.provinces, this.field, this.sampleHeight, this.state.seed);
+    this.scene.add(this.flora.group);
+
+    this.castles = buildCastles();
+    this.scene.add(this.castles.group);
+
+    this.labels = new LabelLayer(this.state.provinces, this.sampleHeight, this.terrain.maxLandHeight, this.maxAniso);
+    this.scene.add(this.labels.group);
   }
 
   private clearMap(): void {
     if (this.terrain) {
-      this.scene.remove(this.terrain.mesh);
+      for (const o of this.terrain.objects) this.scene.remove(o);
       this.terrain.dispose();
       this.terrain = null;
     }
+    if (this.flora) { this.scene.remove(this.flora.group); this.flora.dispose(); this.flora = null; }
+    if (this.castles) { this.scene.remove(this.castles.group); this.castles.dispose(); this.castles = null; }
+    if (this.labels) { this.scene.remove(this.labels.group); this.labels.dispose(); this.labels = null; }
+    if (this.routes) { this.scene.remove(this.routes.group); this.routes.dispose(); this.routes = null; }
+    this.field = null;
+
     for (const ov of this.overlays.values()) {
       for (const obj of ov.objects) this.scene.remove(obj);
       ov.dispose();
@@ -263,16 +282,15 @@ export class WorldScene implements WorldBridge {
     this.overlays.clear();
     this.fillMeshes = [];
 
-    for (const s of this.settlementSprites.values()) this.disposeSprite(s);
-    this.settlementSprites.clear();
-    this.settlementSig.clear();
+    for (const s of this.shieldSprites.values()) this.disposeSprite(s);
+    this.shieldSprites.clear();
+    this.shieldSig.clear();
 
-    for (const rec of this.armySprites.values()) this.disposeSprite(rec.sprite);
-    this.armySprites.clear();
-    this.armySpriteList = [];
+    for (const rec of this.armies.values()) { this.scene.remove(rec.marker.group); rec.marker.dispose(); }
+    this.armies.clear();
+    this.armyPickables = [];
 
     this.provinceById.clear();
-    this.centerH.clear();
     this.hoveredId = null;
     this.selectedProvinceId = null;
     this.selectedArmyId = null;
@@ -281,76 +299,90 @@ export class WorldScene implements WorldBridge {
 
   // ---------------------------------------------------------------- refresh
 
-  private refreshOverlayColors(): void {
+  /** facciones actualmente en guerra con el jugador. */
+  private enemyFactions(): Set<FactionId> {
+    const player = this.state.playerFactionId;
+    const enemies = new Set<FactionId>();
+    for (const w of this.state.wars) {
+      if (w.attackerId === player) enemies.add(w.defenderId);
+      else if (w.defenderId === player) enemies.add(w.attackerId);
+    }
+    return enemies;
+  }
+
+  private rebuildBorders(): void {
+    const player = this.state.playerFactionId;
+    const enemies = this.enemyFactions();
+    const ownerOf = (id: ProvinceId): FactionId | null => this.provinceById.get(id)?.ownerId ?? null;
     for (const p of this.state.provinces) {
-      this.overlays.get(p.id)?.setOwnerColor(this.ownerColor(p));
+      const ov = this.overlays.get(p.id);
+      if (!ov) continue;
+      ov.rebuild({
+        ownerHex: this.ownerColor(p),
+        selfOwner: p.ownerId,
+        isPlayer: p.ownerId === player,
+        isEnemyAtWar: p.ownerId !== null && enemies.has(p.ownerId),
+        ownerOf,
+      });
     }
   }
 
-  private refreshSettlements(): void {
+  private refreshShields(): void {
     for (const p of this.state.provinces) {
       const faction = p.ownerId ? this.state.factions[p.ownerId] : undefined;
       const st = p.settlement;
-      const sig = faction
-        ? `own:${p.ownerId}:${st.level}:${st.fortLevel}`
-        : 'neutral';
-      if (this.settlementSig.get(p.id) === sig) continue;
+      const sig = faction ? `own:${p.ownerId}:${st.level}:${st.fortLevel}` : 'neutral';
+      const prev = this.shieldSprites.get(p.id);
 
-      const prev = this.settlementSprites.get(p.id);
+      if (!faction) {
+        if (prev) { this.disposeSprite(prev); this.shieldSprites.delete(p.id); this.shieldSig.delete(p.id); }
+        continue;
+      }
+      const topY = this.castles?.topY(p.id) ?? this.sampleHeight(p.center[0], p.center[1]) + 6;
+      if (this.shieldSig.get(p.id) === sig && prev) {
+        prev.position.set(p.center[0], topY, p.center[1]);
+        continue;
+      }
       if (prev) this.disposeSprite(prev);
 
-      let sprite: THREE.Sprite;
-      if (faction) {
-        const key = `shield:${p.ownerId}:${st.level}:${st.fortLevel}`;
-        const tex = this.texture(key, () =>
-          makeShieldCanvas({
-            primary: faction.colorPrimary,
-            secondary: faction.colorSecondary,
-            seed: faction.bannerSeed,
-            initial: (faction.dynastyName || faction.name || '?').slice(0, 1),
-            level: st.level,
-            fortLevel: st.fortLevel,
-          }),
-        );
-        const w = SHIELD_W[st.level];
-        sprite = this.makeSprite(tex, w, w * SHIELD_ASPECT);
-      } else {
-        const tex = this.texture('mojon', () => makeMojonCanvas());
-        sprite = this.makeSprite(tex, MOJON_W, MOJON_W * MOJON_ASPECT);
-      }
-      const ch = this.centerH.get(p.id) ?? 0;
-      sprite.position.set(p.center[0], ch + 3.5, p.center[1]);
+      const key = `shield:${p.ownerId}:${st.level}:${st.fortLevel}`;
+      const tex = this.texture(key, () =>
+        makeShieldCanvas({
+          primary: faction.colorPrimary,
+          secondary: faction.colorSecondary,
+          seed: faction.bannerSeed,
+          initial: (faction.dynastyName || faction.name || '?').slice(0, 1),
+          level: st.level,
+          fortLevel: st.fortLevel,
+        }),
+      );
+      const sw = SHIELD_W[st.level];
+      const sprite = this.makeSprite(tex, sw, sw * SHIELD_ASPECT);
+      sprite.position.set(p.center[0], topY, p.center[1]);
       sprite.userData.provinceId = p.id;
       this.scene.add(sprite);
-      this.settlementSprites.set(p.id, sprite);
-      this.settlementSig.set(p.id, sig);
+      this.shieldSprites.set(p.id, sprite);
+      this.shieldSig.set(p.id, sig);
     }
   }
 
   private refreshArmies(): void {
-    const armies = Object.values(this.state.armies);
+    const list = Object.values(this.state.armies);
 
-    // eliminar huérfanos
-    for (const [id, rec] of this.armySprites) {
-      if (!this.state.armies[id]) {
-        this.disposeSprite(rec.sprite);
-        this.armySprites.delete(id);
-      }
+    for (const [id, rec] of this.armies) {
+      if (!this.state.armies[id]) { this.scene.remove(rec.marker.group); rec.marker.dispose(); this.armies.delete(id); }
     }
 
-    // agrupar por provincia para el abanico de offsets
     const byProvince = new Map<ProvinceId, ArmyId[]>();
-    for (const a of armies) {
-      const list = byProvince.get(a.provinceId);
-      if (list) list.push(a.id);
-      else byProvince.set(a.provinceId, [a.id]);
+    for (const a of list) {
+      const arr = byProvince.get(a.provinceId);
+      if (arr) arr.push(a.id); else byProvince.set(a.provinceId, [a.id]);
     }
 
     for (const [provinceId, ids] of byProvince) {
-      const ch = this.centerH.get(provinceId);
-      if (ch === undefined) continue;
       const p = this.provinceById.get(provinceId);
       if (!p) continue;
+      const ground = this.sampleHeight(p.center[0], p.center[1]);
       const n = ids.length;
       ids.forEach((id, i) => {
         const army = this.state.armies[id];
@@ -358,32 +390,49 @@ export class WorldScene implements WorldBridge {
         const primary = faction ? faction.colorPrimary : ART.neutralOwner;
         const men = army.units.reduce((s, u) => s + u.men, 0);
         const menText = abbrevMen(men);
-        const texKey = `army:${army.factionId}:${menText}`;
+        const texKey = `${army.factionId}:${menText}`;
 
-        let rec = this.armySprites.get(id);
-        if (!rec) {
-          const tex = this.texture(texKey, () => makeArmyCanvas(primary, menText));
-          const sprite = this.makeSprite(tex, ARMY_W, ARMY_W * ARMY_ASPECT);
-          sprite.userData.armyId = id;
-          this.scene.add(sprite);
-          rec = { sprite, texKey };
-          this.armySprites.set(id, rec);
-        } else if (rec.texKey !== texKey) {
-          rec.sprite.material.map = this.texture(texKey, () => makeArmyCanvas(primary, menText));
-          rec.sprite.material.needsUpdate = true;
-          rec.texKey = texKey;
+        let rec = this.armies.get(id);
+        if (!rec || rec.texKey !== texKey) {
+          if (rec) { this.scene.remove(rec.marker.group); rec.marker.dispose(); }
+          const marker = buildArmyMarker(primary, menText, (k, m) => this.texture(k, m), army.factionId);
+          for (const pk of marker.pickables) pk.userData.armyId = id;
+          this.scene.add(marker.group);
+          rec = { marker, texKey, provinceId };
+          this.armies.set(id, rec);
         }
-
-        const ox = 4.5 + i * 3.4;
-        const oz = (i - (n - 1) / 2) * 2.6;
-        rec.sprite.position.set(p.center[0] + ox, ch + 5, p.center[1] + oz);
-        const sel = this.selectedArmyId === id ? ARMY_SEL_SCALE : 1;
-        rec.sprite.scale.set(ARMY_W * sel, ARMY_W * ARMY_ASPECT * sel, 1);
+        rec.provinceId = provinceId;
+        const ox = 6.6 + i * 3.8;
+        const oz = (i - (n - 1) / 2) * 3.0;
+        rec.marker.group.position.set(p.center[0] + ox, ground, p.center[1] + oz);
+        rec.marker.setSelected(this.selectedArmyId === id);
       });
     }
 
-    this.armySpriteList = [];
-    for (const rec of this.armySprites.values()) this.armySpriteList.push(rec.sprite);
+    this.armyPickables = [];
+    for (const rec of this.armies.values()) for (const pk of rec.marker.pickables) this.armyPickables.push(pk);
+  }
+
+  private rebuildRoutes(): void {
+    if (this.routes) { this.scene.remove(this.routes.group); this.routes.dispose(); this.routes = null; }
+    if (this.selectedArmyId === null || this.moveTargetIds.size === 0) return;
+    const army = this.state.armies[this.selectedArmyId];
+    if (!army) return;
+    const from = this.provinceById.get(army.provinceId);
+    if (!from) return;
+    const enemies = this.enemyFactions();
+    const targets: RouteTarget[] = [];
+    for (const id of this.moveTargetIds) {
+      const tp = this.provinceById.get(id);
+      if (!tp) continue;
+      const contested =
+        tp.ownerId !== army.factionId &&
+        (tp.ownerId === null || tp.ownerId !== this.state.playerFactionId || enemies.has(tp.ownerId));
+      targets.push({ x: tp.center[0], z: tp.center[1], hostile: contested });
+    }
+    const baseY = (this.terrain?.maxLandHeight ?? 6) + 2.5;
+    this.routes = buildRoutes({ x: from.center[0], z: from.center[1] }, targets, baseY);
+    this.scene.add(this.routes.group);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -415,17 +464,9 @@ export class WorldScene implements WorldBridge {
     return sprite;
   }
 
-  /** dispone el material del sprite (la textura vive en caché y no se dispone aquí). */
   private disposeSprite(sprite: THREE.Sprite): void {
     this.scene.remove(sprite);
     sprite.material.dispose();
-  }
-
-  private scaleArmy(id: ArmyId, selected: boolean): void {
-    const rec = this.armySprites.get(id);
-    if (!rec) return;
-    const s = selected ? ARMY_SEL_SCALE : 1;
-    rec.sprite.scale.set(ARMY_W * s, ARMY_W * ARMY_ASPECT * s, 1);
   }
 
   // ---------------------------------------------------------------- bucle / resize
@@ -435,8 +476,20 @@ export class WorldScene implements WorldBridge {
     const now = performance.now();
     if (this.focusTween) this.stepFocus(now);
     this.controls.update();
-    const pulse = this.reducedMotion ? 0.5 : 0.45 + 0.1 * Math.sin(now * 0.005);
+
+    const camDist = this.camera.position.distanceTo(this.controls.target);
+    const wantDetail = camDist < DETAIL_MAX_DIST;
+    if (wantDetail !== this.detailVisible) {
+      this.detailVisible = wantDetail;
+      this.flora?.setDetailVisible(wantDetail);
+      this.castles?.setDetailVisible(wantDetail);
+    }
+    this.labels?.update(camDist);
+    this.terrain?.update(now);
+
+    const pulse = this.reducedMotion ? 0.5 : 0.5 + 0.5 * Math.sin(now * 0.0022);
     for (const ov of this.overlays.values()) ov.apply(pulse);
+
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -444,15 +497,13 @@ export class WorldScene implements WorldBridge {
     const f = this.focusTween;
     if (!f) return;
     const raw = Math.min(1, (now - f.start) / f.dur);
-    const e = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2; // easeInOutQuad
+    const e = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
     this.controls.target.x = f.fromX + (f.toX - f.fromX) * e;
     this.controls.target.z = f.fromZ + (f.toZ - f.fromZ) * e;
     if (raw >= 1) this.focusTween = null;
   }
 
-  private readonly cancelFocus = (): void => {
-    this.focusTween = null;
-  };
+  private readonly cancelFocus = (): void => { this.focusTween = null; };
 
   private readonly onResize = (): void => {
     const w = Math.max(1, this.container.clientWidth);
@@ -474,7 +525,7 @@ export class WorldScene implements WorldBridge {
   }
 
   private hitArmy(): ArmyId | null {
-    const hits = this.raycaster.intersectObjects(this.armySpriteList, false);
+    const hits = this.raycaster.intersectObjects(this.armyPickables, false);
     for (const h of hits) {
       const id = h.object.userData.armyId;
       if (typeof id === 'string') return id;
@@ -512,14 +563,11 @@ export class WorldScene implements WorldBridge {
     const down = this.downPos;
     this.downPos = null;
     if (!down) return;
-    if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) >= CLICK_SLOP) return; // fue arrastre
+    if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) >= CLICK_SLOP) return;
     if (!this.onSelect) return;
     this.updateRay(ev);
-    const army = this.hitArmy(); // prioridad de picking: ejército > provincia
-    if (army !== null) {
-      this.onSelect({ kind: 'army', id: army });
-      return;
-    }
+    const army = this.hitArmy();
+    if (army !== null) { this.onSelect({ kind: 'army', id: army }); return; }
     const province = this.hitProvince();
     this.onSelect(province !== null ? { kind: 'province', id: province } : null);
   };

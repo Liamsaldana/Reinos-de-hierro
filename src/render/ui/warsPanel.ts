@@ -13,6 +13,8 @@ import type { ToastStack } from './toast';
 
 export interface WarsPanel {
   refresh(): void;
+  /** Llama la atención sobre el panel (usado por el chip "Guerras" de la franja de estado). */
+  focus(): void;
 }
 
 function hasWarBetween(state: GameState, a: FactionId, b: FactionId): boolean {
@@ -140,5 +142,12 @@ export function createWarsPanel(container: HTMLElement, store: GameStore, toast:
     }
   });
 
-  return { refresh: render };
+  function focus(): void {
+    if (!panel.classList.contains('is-visible')) return;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    panel.classList.add('is-flashing');
+    window.setTimeout(() => panel.classList.remove('is-flashing'), 900);
+  }
+
+  return { refresh: render, focus };
 }

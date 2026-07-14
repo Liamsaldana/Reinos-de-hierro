@@ -4,7 +4,8 @@
  */
 import type { GameStore } from '../../core/state/store';
 import type {
-  Army, ArmyId, GameState, Province, ProvinceId, Selection, UnitCost, UnitType, WorldBridge,
+  Army, ArmyId, GameState, Province, ProvinceId, Selection, UnitCategory, UnitCost, UnitType,
+  WorldBridge,
 } from '../../core/types';
 import { recruitUnit, moveArmy, legalMoves, wouldTriggerBattle } from '../../core/systems/actions';
 import { launchTacticalBattle } from '../../game/battleFlow';
@@ -14,10 +15,27 @@ import { el, fmt, clear, replaceChildren, type Child } from './dom';
 import {
   TERRAIN_ES, UNIT_CATEGORY_ES, ownerLabel, settlementLabel, fortLabel, factionHasResource,
 } from './format';
+import { glyphHtml } from './iconGlyph';
 import type { ToastStack } from './toast';
 
 export interface LeftPanel {
   refresh(): void;
+}
+
+const UNIT_CATEGORY_ICON: Record<UnitCategory, string> = {
+  infantry: 'infanteria',
+  cavalry: 'caballeria',
+  ranged: 'arco',
+  spear: 'lanceros',
+  siege: 'asedio',
+};
+
+function categoryBadge(category: UnitCategory): HTMLElement {
+  const icon = el('span', { className: 'category-badge__icon', 'aria-hidden': 'true' });
+  icon.innerHTML = glyphHtml(UNIT_CATEGORY_ICON[category], '', 14);
+  return el('span', { className: 'category-badge', title: UNIT_CATEGORY_ES[category] }, [
+    icon, UNIT_CATEGORY_ES[category],
+  ]);
 }
 
 function costLabel(cost: UnitCost): string {
@@ -92,8 +110,8 @@ export function createLeftPanel(
     const disabled = reasons.length > 0;
     return el('div', { className: 'recruit-row' }, [
       el('span', { className: 'recruit-row__name' }, [unitType.name]),
-      el('span', { className: 'recruit-row__cat' }, [UNIT_CATEGORY_ES[unitType.category]]),
-      el('span', { className: 'recruit-row__cost' }, [costLabel(unitType.cost)]),
+      el('span', { className: 'recruit-row__cat' }, [categoryBadge(unitType.category)]),
+      el('span', { className: 'recruit-row__cost', title: costLabel(unitType.cost) }, [costLabel(unitType.cost)]),
       el('button', {
         type: 'button',
         className: 'btn btn--small',

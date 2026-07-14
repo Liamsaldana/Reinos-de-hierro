@@ -139,6 +139,150 @@ export function makeShieldCanvas(spec: ShieldSpec): HTMLCanvasElement {
   return canvas;
 }
 
+/**
+ * Estandarte vertical del castillo (plane con textura heráldica): campo primario
+ * partido con el secundario según la semilla, borde de hierro, inicial dinástica.
+ * Canvas 128×192 (proporción de gallardete colgante).
+ */
+export function makeBannerCanvas(spec: {
+  primary: string;
+  secondary: string;
+  seed: number;
+  initial: string;
+}): HTMLCanvasElement {
+  const W = 128;
+  const H = 192;
+  const { canvas, ctx } = newCanvas(W, H);
+
+  // campo primario
+  ctx.fillStyle = spec.primary;
+  ctx.fillRect(0, 0, W, H);
+
+  // partición determinista con el secundario
+  const r = visualRng(spec.seed ^ 0xba57);
+  ctx.fillStyle = spec.secondary;
+  switch (r.pick(PARTITIONS)) {
+    case 'partido':
+      ctx.fillRect(W * 0.5, 0, W, H);
+      break;
+    case 'cortado':
+      ctx.fillRect(0, H * 0.5, W, H);
+      break;
+    case 'jefe':
+      ctx.fillRect(0, 0, W, H * 0.24);
+      break;
+    case 'banda': {
+      ctx.save();
+      ctx.translate(W * 0.5, H * 0.5);
+      ctx.rotate(-Math.PI / 4);
+      ctx.fillRect(-H, -W * 0.16, H * 2, W * 0.32);
+      ctx.restore();
+      break;
+    }
+  }
+
+  // cola dentada del gallardete (dos picos inferiores)
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(W * 0.5, H - H * 0.12);
+  ctx.lineTo(W, H);
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // borde de hierro
+  ctx.lineWidth = W * 0.06;
+  ctx.strokeStyle = ART.ironDark;
+  ctx.strokeRect(ctx.lineWidth / 2, ctx.lineWidth / 2, W - ctx.lineWidth, H - ctx.lineWidth * 0.7);
+
+  // inicial dinástica
+  const initial = (spec.initial || '?').slice(0, 1).toUpperCase();
+  ctx.font = `700 ${Math.round(H * 0.34)}px Georgia, serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(20,17,15,0.85)';
+  ctx.shadowBlur = 6;
+  ctx.fillStyle = ART.parchment;
+  ctx.fillText(initial, W * 0.5, H * 0.42);
+  ctx.shadowBlur = 0;
+
+  return canvas;
+}
+
+/** silueta de soldado (billboard) para el marcador de ejército. Canvas 64×96. */
+export function makeSoldierCanvas(primary: string): HTMLCanvasElement {
+  const W = 64;
+  const H = 96;
+  const { canvas, ctx } = newCanvas(W, H);
+  const cx = W * 0.5;
+  ctx.fillStyle = ART.ironDark;
+  // casco + cabeza
+  ctx.beginPath();
+  ctx.arc(cx, H * 0.2, W * 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  // torso (tabardo con color de casa)
+  ctx.fillStyle = primary;
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.16, H * 0.32);
+  ctx.lineTo(cx + W * 0.16, H * 0.32);
+  ctx.lineTo(cx + W * 0.2, H * 0.66);
+  ctx.lineTo(cx - W * 0.2, H * 0.66);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = ART.ironDark;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // piernas
+  ctx.strokeStyle = ART.ironDark;
+  ctx.lineWidth = W * 0.11;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - W * 0.09, H * 0.66);
+  ctx.lineTo(cx - W * 0.09, H * 0.9);
+  ctx.moveTo(cx + W * 0.09, H * 0.66);
+  ctx.lineTo(cx + W * 0.09, H * 0.9);
+  ctx.stroke();
+  // lanza
+  ctx.strokeStyle = '#2a251f';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(cx + W * 0.28, H * 0.08);
+  ctx.lineTo(cx + W * 0.28, H * 0.92);
+  ctx.stroke();
+  ctx.fillStyle = ART.parchment;
+  ctx.beginPath();
+  ctx.moveTo(cx + W * 0.28, H * 0.02);
+  ctx.lineTo(cx + W * 0.22, H * 0.12);
+  ctx.lineTo(cx + W * 0.34, H * 0.12);
+  ctx.closePath();
+  ctx.fill();
+  return canvas;
+}
+
+/** placa oscura con el número de hombres (billboard). Canvas 160×72. */
+export function makeMenPlateCanvas(menText: string): HTMLCanvasElement {
+  const W = 160;
+  const H = 72;
+  const { canvas, ctx } = newCanvas(W, H);
+  ctx.font = `700 ${Math.round(H * 0.5)}px Georgia, serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(27,23,22,0.94)';
+  const rr = H * 0.28;
+  ctx.beginPath();
+  ctx.roundRect(4, 4, W - 8, H - 8, rr);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(237,231,214,0.42)';
+  ctx.stroke();
+  ctx.fillStyle = ART.parchment;
+  ctx.fillText(menText, W / 2, H / 2 + 1);
+  return canvas;
+}
+
 /** mojón de tierra sin señor: disco gris con una torre simple. Canvas 128×160. */
 export function makeMojonCanvas(): HTMLCanvasElement {
   const W = 128;

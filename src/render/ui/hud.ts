@@ -4,6 +4,7 @@
  */
 import type { GameStore } from '../../core/state/store';
 import type { WorldBridge } from '../../core/types';
+import { seasonOf } from '../../core/types';
 import { endTurn } from '../../core/systems/turn';
 import { createTopBar, type ResourceDelta } from './topBar';
 import { createLeftPanel } from './leftPanel';
@@ -12,6 +13,11 @@ import { createChronicleDrawer } from './chronicleDrawer';
 import { createSaveMenu } from './saveMenu';
 import { createBattleModal } from './battleModal';
 import { createGameOverOverlay } from './gameOverOverlay';
+import { createStatusStrip } from './statusStrip';
+import { createSelectionBreadcrumb } from './selectionBreadcrumb';
+import { createOnboardingTip } from './onboardingTip';
+import { createTurnReport } from './turnReport';
+import { computeEconomyBreakdown } from './gameQueries';
 import { el } from './dom';
 import type { ToastStack } from './toast';
 
@@ -33,38 +39,56 @@ export function createHud(
   let lastDelta: ResourceDelta | null = null;
 
   const topBar = createTopBar(hudRoot, store, () => handleEndTurn());
+  const statusStrip = createStatusStrip(hudRoot, store, getWorld, () => warsPanel.focus());
+  const breadcrumb = createSelectionBreadcrumb(hudRoot, store);
   const leftPanel = createLeftPanel(hudRoot, store, getWorld, toast);
   const warsPanel = createWarsPanel(hudRoot, store, toast);
   const chronicle = createChronicleDrawer(hudRoot, store);
   createSaveMenu(hudRoot, store, toast, onBackToMenu);
   const battleModal = createBattleModal(hudRoot, store);
+  const turnReport = createTurnReport(hudRoot, store, getWorld);
+  const onboardingTip = createOnboardingTip(hudRoot, store);
   const gameOver = createGameOverOverlay(hudRoot, () => onBackToMenu());
 
+  /**
+   * Informe del turno, en vez de un chorro de toasts sueltos: la economía se
+   * desglosa con las MISMAS fórmulas puras de core/systems/economy.ts, leídas
+   * justo antes de cerrar el turno (evidencia real, no un resumen inventado).
+   */
   function handleEndTurn(): void {
     if (!store.hasGame) return;
-    const before = store.state.factions[store.state.playerFactionId];
-    const beforeSnapshot = { gold: before.gold, food: before.foodStock };
+    const state = store.state;
+    const playerId = state.playerFactionId;
+    const before = state.factions[playerId];
+    const beforeSnapshot = { gold: before.gold, food: before.foodStock, manpower: before.manpower };
+    const turnEnded = state.turn;
+    const economy = computeEconomyBreakdown(state, playerId, seasonOf(state.turn));
+    const chronicleBefore = state.chronicle.length;
 
     const rng = store.rng();
     const summary = store.mutate(s => endTurn(s, rng), { type: 'turn-ended' });
 
-    for (const msg of summary.messages) toast.show(msg, 'info');
-
-    const playerId = store.state.playerFactionId;
     const after = store.state.factions[playerId];
     lastDelta = after
-      ? { gold: after.gold - beforeSnapshot.gold, food: after.foodStock - beforeSnapshot.food }
+      ? {
+        gold: after.gold - beforeSnapshot.gold,
+        food: after.foodStock - beforeSnapshot.food,
+        manpower: after.manpower - beforeSnapshot.manpower,
+        economy,
+      }
       : null;
     topBar.refresh(lastDelta);
 
-    const playerBattle = summary.battles.find(
-      b => b.attacker.factionId === playerId || b.defender.factionId === playerId,
-    );
-    if (playerBattle) battleModal.show(playerBattle);
-
     if (summary.gameOver || store.state.outcome !== 'ongoing') {
       gameOver.show(store.state);
+      return;
     }
+
+    const newChronicle = store.state.chronicle.slice(chronicleBefore);
+    turnReport.show(
+      { turnEnded, summary, economy, newChronicle },
+      report => battleModal.show(report),
+    );
   }
 
   store.subscribe((state, ev) => {
@@ -99,9 +123,12 @@ export function createHud(
       hudRoot.classList.add('is-visible');
       hudRoot.setAttribute('aria-hidden', 'false');
       if (store.hasGame) topBar.refresh(lastDelta);
+      statusStrip.refresh();
+      breadcrumb.refresh();
       leftPanel.refresh();
       warsPanel.refresh();
       chronicle.refresh();
+      onboardingTip.refresh();
     },
     hide(): void {
       hudRoot.classList.remove('is-visible');

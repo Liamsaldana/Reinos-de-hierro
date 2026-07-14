@@ -126,17 +126,21 @@ interface ReportRow {
   warsDeclared: number;
   battles: number;
   ownerChanges: number;
+  /** cambios de dueño ENTRE DOS FACCIONES vivas (capturado a un rival, no reclamado de tierra sin señor). */
+  conquests: number;
   aliveFactions: number;
+  /** facciones vivas justo al cerrar el turno 15 (detecta "exterminio relámpago"). */
+  aliveAt15: number;
   avgGold: number;
   durationMs: number;
 }
 
 const reportRows: ReportRow[] = [];
 
-describe('Harness de simulación — el mundo vive sin jugador (AGENTE I)', () => {
+describe('Harness de simulación — el mundo vive sin jugador (AGENTE I / AGENTE N)', () => {
   describe('Simulación corta: 3 semillas x 30 turnos, sin acciones del jugador', () => {
     for (const seed of SHORT_SEEDS) {
-      it(`semilla ${seed}: nunca lanza, invariantes intactos, turn===${SHORT_TURNS} al final`, (ctx) => {
+      it(`semilla ${seed}: nunca lanza, invariantes intactos, turn===${SHORT_TURNS} al final, y hay AL MENOS 1 conquista real`, (ctx) => {
         guardOrSkip(ctx);
 
         const start = Date.now();
@@ -146,9 +150,21 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I)', () =
         const metrics: SimMetrics = emptyMetrics();
         let prevOwners = snapshotOwners(state);
         let prevChronicleLen = state.chronicle.length;
+        let conquests = 0;
+        let aliveAt15 = -1;
 
         for (let t = 0; t < SHORT_TURNS; t++) {
+          const beforeOwners = prevOwners;
           prevOwners = advanceTurn(state, metrics, prevOwners);
+
+          // "conquista" = provincia que cambió de manos ENTRE DOS FACCIONES
+          // (no una tierra sin señor recién reclamada): la señal de que la
+          // IA de verdad le quita territorio a un rival, no solo rellena
+          // el mapa vacío.
+          for (const [id, owner] of prevOwners) {
+            const before = beforeOwners.get(id) ?? null;
+            if (before !== null && owner !== null && before !== owner) conquests += 1;
+          }
 
           expect(
             state.chronicle.length,
@@ -157,9 +173,19 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I)', () =
           prevChronicleLen = state.chronicle.length;
 
           assertWorldInvariants(state, `seed ${seed} turno ${t + 1}`);
+
+          if (t === 14) { // tras el turno 15 (t es 0-index; state.turn ya vale 15 aquí)
+            aliveAt15 = Object.values(state.factions).filter(f => f.alive).length;
+          }
         }
 
         expect(state.turn).toBe(SHORT_TURNS);
+
+        expect(
+          conquests,
+          `seed ${seed}: la IA no conquistó NINGUNA provincia de un rival en ${SHORT_TURNS} turnos `
+            + '(solo tomó tierra sin señor, si acaso) — el mundo sigue sin morder de verdad.',
+        ).toBeGreaterThanOrEqual(1);
 
         const aliveFactions = Object.values(state.factions).filter(f => f.alive);
         const avgGold = aliveFactions.length
@@ -172,12 +198,43 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I)', () =
           warsDeclared: metrics.warsDeclared,
           battles: metrics.battles,
           ownerChanges: metrics.ownerChanges,
+          conquests,
           aliveFactions: aliveFactions.length,
+          aliveAt15,
           avgGold: Math.round(avgGold),
           durationMs: Date.now() - start,
         });
       });
     }
+
+    it('agregado de las 3 semillas: >=4 batallas, >=6 cambios de dueño, y >=2 semillas con las 3 facciones vivas al turno 15 (sin exterminio relámpago)', (ctx) => {
+      guardOrSkip(ctx);
+      // Depende de que las 3 `it` de arriba ya hayan corrido y llenado
+      // `reportRows` (vitest ejecuta los `it` de un mismo archivo en orden,
+      // no en paralelo, salvo `concurrent` explícito — no es el caso aquí).
+      expect(
+        reportRows.length,
+        'faltan filas de la simulación corta: revisa que las 3 semillas hayan corrido antes que este test.',
+      ).toBe(SHORT_SEEDS.length);
+
+      const totalBattles = reportRows.reduce((s, r) => s + r.battles, 0);
+      const totalOwnerChanges = reportRows.reduce((s, r) => s + r.ownerChanges, 0);
+      const seedsWithAllAliveAt15 = reportRows.filter((r) => r.aliveAt15 === 3).length;
+
+      expect(
+        totalBattles,
+        `solo ${totalBattles} batalla(s) en total entre las 3 semillas (se pedían >=4).`,
+      ).toBeGreaterThanOrEqual(4);
+      expect(
+        totalOwnerChanges,
+        `solo ${totalOwnerChanges} cambio(s) de dueño en total entre las 3 semillas (se pedían >=6).`,
+      ).toBeGreaterThanOrEqual(6);
+      expect(
+        seedsWithAllAliveAt15,
+        `solo ${seedsWithAllAliveAt15} de ${SHORT_SEEDS.length} semillas llegan al turno 15 con las 3 facciones `
+          + `vivas (se pedían >=2) — aliveAt15 por semilla: ${reportRows.map((r) => `${r.seed}:${r.aliveAt15}`).join(', ')}.`,
+      ).toBeGreaterThanOrEqual(2);
+    });
   });
 
   describe('Vida del mundo: la IA actúa de verdad sin jugador', () => {
@@ -233,8 +290,54 @@ function writeReport(): void {
 
   lines.push('# Reporte de simulación — Reinos de Hierro');
   lines.push('');
-  lines.push(`Generado automáticamente por \`tests/simulation.test.ts\` (AGENTE I, harness de simulación) — ${fecha}.`);
+  lines.push(`Generado automáticamente por \`tests/simulation.test.ts\` (AGENTE I / AGENTE N, harness de simulación) — ${fecha}.`);
   lines.push('');
+
+  if (!GUARD.pending) {
+    lines.push('## Diagnóstico (AGENTE N — "la IA debe morder")');
+    lines.push('');
+    lines.push(
+      'Antes del arreglo, 30 turnos x 3 semillas daban ~1 guerra declarada y **0 batallas / 0 conquistas**: '
+        + 'el mundo se congelaba tras la declaración de guerra inicial. Causa raíz, verificada instrumentando '
+        + 'una corrida: `src/core/ai/factionAI.ts` comparaba magnitudes incompatibles al decidir si atacar.',
+    );
+    lines.push('');
+    lines.push(
+      '- `province.garrison` es una **cuenta de hombres** (~200-500 en provincias propias, ~300-800 en tierras '
+        + 'sin señor — `content/mapgen.ts` / `content/newGame.ts`).',
+    );
+    lines.push(
+      '- `armyStrength()` (`combat/autoresolve.ts`) es una **puntuación de poder** por ejército, típicamente '
+        + '~30-100 para lo que esta IA reúne en 30 turnos.',
+    );
+    lines.push(
+      '- El código viejo hacía `defenseEstimate = targetProvince.garrison + Σ armyStrength(enemigos)` y '
+        + 'comparaba eso contra `myStrength` (una `armyStrength`): al dominar la suma el término en cientos, '
+        + 'el umbral de ataque no se superaba NUNCA, ni siquiera contra una guarnición "débil" en el turno 0. '
+        + 'La expansión pacífica (`p.garrison < myStrength`) tenía el mismo defecto.',
+    );
+    lines.push(
+      '- La ironía: en combate real (`resolveBattleAt`), la guarnición NO pelea proporcional a su cantidad de '
+        + 'hombres — `autoresolve.ts` clona la unidad \'milicia\' con `menMax = province.garrison`, así que su '
+        + 'ratio hombres/menMax es SIEMPRE 1 y su potencia por ronda es la de UNA unidad de milicia a plena '
+        + 'dotación (~4.5, modulada por terreno/fortificación), **sin importar el tamaño de la guarnición**. '
+        + 'Cualquier ejército inicial (armyStrength ~30-38) aplasta esa guarnición — la IA vieja simplemente '
+        + 'nunca lo intentaba porque comparaba cientos contra decenas.',
+    );
+    lines.push('');
+    lines.push(
+      'Arreglo: `garrisonDefensePower()` reconstruye la potencia de guarnición EN LAS MISMAS UNIDADES que '
+        + '`armyStrength()`, a partir de datos públicos de `content/units.ts` (nunca se importó '
+        + '`combat/modifiers.ts`: ese módulo se declara expresamente interno al combate). Con la escala '
+        + 'corregida, la IA además: distingue umbral de ataque por arquetipo (ambitious 1.15x / tribal 0.95x / '
+        + 'consolidated 1.35x) contando SOLO la defensa presente en la provincia objetivo, se retira si su '
+        + 'fuerza cae bajo 0.6x la amenaza en provincias vecinas (no se suicida), y evita el caso borde donde '
+        + '`actions.ts:hasDefense` marcaría "defendida" una provincia sin guarnición y sin nadie en guerra con '
+        + 'nosotros presente (`safeToMoveInto`), que habría hecho lanzar `resolveBattleAt` ("No hay '
+        + 'defensores").',
+    );
+    lines.push('');
+  }
 
   if (GUARD.pending) {
     lines.push('## Estado: PENDIENTE');
@@ -252,21 +355,35 @@ function writeReport(): void {
   } else {
     lines.push('## Simulación corta (30 turnos, sin acciones del jugador)');
     lines.push('');
-    lines.push('| Semilla | Guerras declaradas | Batallas | Provincias que cambiaron de dueño | Facciones vivas | Oro medio | Duración (ms) |');
-    lines.push('|---:|---:|---:|---:|---:|---:|---:|');
+    lines.push(
+      '| Semilla | Guerras declaradas | Batallas | Provincias que cambiaron de dueño | '
+        + 'Conquistas (a un rival) | Facciones vivas @turno15 | Facciones vivas @final | Oro medio | Duración (ms) |',
+    );
+    lines.push('|---:|---:|---:|---:|---:|---:|---:|---:|---:|');
     for (const row of reportRows) {
       lines.push(
-        `| ${row.seed} | ${row.warsDeclared} | ${row.battles} | ${row.ownerChanges} | `
-          + `${row.aliveFactions} | ${row.avgGold} | ${row.durationMs} |`,
+        `| ${row.seed} | ${row.warsDeclared} | ${row.battles} | ${row.ownerChanges} | ${row.conquests} | `
+          + `${row.aliveAt15} | ${row.aliveFactions} | ${row.avgGold} | ${row.durationMs} |`,
       );
     }
     lines.push('');
     const totalWars = reportRows.reduce((s, r) => s + r.warsDeclared, 0);
     const totalBattles = reportRows.reduce((s, r) => s + r.battles, 0);
     const totalOwnerChanges = reportRows.reduce((s, r) => s + r.ownerChanges, 0);
+    const totalConquests = reportRows.reduce((s, r) => s + r.conquests, 0);
+    const seedsWithAllAliveAt15 = reportRows.filter((r) => r.aliveAt15 === 3).length;
     lines.push(
       `Actividad de IA acumulada en las ${reportRows.length} semillas: ${totalWars} guerra(s) declarada(s), `
-        + `${totalBattles} batalla(s), ${totalOwnerChanges} cambio(s) de dueño de provincia.`,
+        + `${totalBattles} batalla(s), ${totalOwnerChanges} cambio(s) de dueño de provincia (de ellos, `
+        + `${totalConquests} conquistados a un rival vivo, no tierra sin señor).`,
+    );
+    lines.push('');
+    lines.push(
+      `Criterio de éxito (AGENTE N): batallas totales >=4 (${totalBattles >= 4 ? 'OK' : 'FALLA'}), `
+        + `cambios de dueño totales >=6 (${totalOwnerChanges >= 6 ? 'OK' : 'FALLA'}), >=1 conquista en CADA `
+        + `semilla (${reportRows.every((r) => r.conquests >= 1) ? 'OK' : 'FALLA'}), y >=2 de ${reportRows.length} `
+        + `semillas con las 3 facciones vivas al turno 15, sin exterminio relámpago `
+        + `(${seedsWithAllAliveAt15 >= 2 ? 'OK' : 'FALLA'}).`,
     );
   }
 
