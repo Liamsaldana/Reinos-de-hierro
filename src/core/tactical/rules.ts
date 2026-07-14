@@ -9,11 +9,12 @@ import type { HexCoord, TacticalCell, TacticalSide, TacticalState, TacticalUnit 
 import { buildCellMap, cellKey, hexDistance, hexNeighbors, terrainCost } from './grid';
 
 // --- constantes de calibración (ajustadas para batallas de ~4-8 rondas) ---
-const CASUALTY_SCALE = 0.62;   // escala global de bajas por golpe
+const CASUALTY_SCALE = 3.5;    // escala global de bajas por golpe
 const RATIO_CAP = 2.5;         // techo de (men/menMax) para evitar golpes de un solo turno
 const MORALE_PER_PCT = 12;     // pérdida de moral por %bajas (fracción × 12)
 const FLANK_MORALE = 4;        // moral extra perdida al ser flanqueada
 const ROUT_CASCADE = 3;        // moral perdida por unidad a ≤2 hexes de una amiga que huye
+const ROUT_SHOCK = 2;          // conmoción de línea: moral perdida por TODA amiga cuando una huye
 
 export function active(u: TacticalUnit): boolean {
   return !u.routed && u.men > 0;
@@ -246,14 +247,13 @@ export function routCheck(ts: TacticalState, u: TacticalUnit): void {
     if (dead) ts.log.push(`${cur.name} es aniquilada.`);
     else ts.log.push(`¡${cur.name} rompe filas y huye del campo!`);
 
-    // cascada: amigas a ≤2 hexes pierden moral (+ puede encadenar rupturas)
+    // cascada: amigas cercanas pierden mucha moral; toda la línea acusa la huida
     if (!dead) {
       for (const f of ts.units) {
         if (f === cur || f.side !== cur.side || !active(f)) continue;
-        if (hexDistance(f.coord, cur.coord) <= 2) {
-          f.morale -= ROUT_CASCADE;
-          if (f.morale <= 0) queue.push(f);
-        }
+        const near = hexDistance(f.coord, cur.coord) <= 2;
+        f.morale -= near ? ROUT_CASCADE : ROUT_SHOCK;
+        if (f.morale <= 0) queue.push(f);
       }
     }
   }

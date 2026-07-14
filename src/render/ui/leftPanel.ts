@@ -6,7 +6,8 @@ import type { GameStore } from '../../core/state/store';
 import type {
   Army, ArmyId, GameState, Province, ProvinceId, Selection, UnitCost, UnitType, WorldBridge,
 } from '../../core/types';
-import { recruitUnit, moveArmy, legalMoves } from '../../core/systems/actions';
+import { recruitUnit, moveArmy, legalMoves, wouldTriggerBattle } from '../../core/systems/actions';
+import { launchTacticalBattle } from '../../game/battleFlow';
 import { unitTypesFor, getUnitType } from '../../core/content/units';
 import { armyStrength } from '../../core/combat/autoresolve';
 import { el, fmt, clear, replaceChildren, type Child } from './dom';
@@ -182,15 +183,62 @@ export function createLeftPanel(
       const armyId = moveMode.armyId;
       const toId = sel.id;
       exitMoveMode();
-      const rng = store.rng();
-      const result = store.mutate(s => moveArmy(s, rng, armyId, toId), { type: 'map-changed' });
-      if (result.battle) store.emit({ type: 'battle', report: result.battle });
-      toast.show(result.message, result.ok ? 'info' : 'warn');
-      store.setSelection({ kind: 'army', id: armyId });
+      if (wouldTriggerBattle(store.state, armyId, toId)) {
+        askBattleMode(store.state, toId, mode => {
+          if (mode === 'tactical') {
+            void launchTacticalBattle(store, armyId, toId).then(r => {
+              toast.show(r.message, r.ok ? 'info' : 'warn');
+            });
+          } else {
+            executeAutoMove(armyId, toId);
+          }
+        });
+        return true;
+      }
+      executeAutoMove(armyId, toId);
       return true;
     }
     exitMoveMode();
     return false;
+  }
+
+  function executeAutoMove(armyId: ArmyId, toId: ProvinceId): void {
+    const rng = store.rng();
+    const result = store.mutate(s => moveArmy(s, rng, armyId, toId), { type: 'map-changed' });
+    if (result.battle) store.emit({ type: 'battle', report: result.battle });
+    toast.show(result.message, result.ok ? 'info' : 'warn');
+    if (store.state.armies[armyId]) store.setSelection({ kind: 'army', id: armyId });
+  }
+
+  /** Modal mínimo: comandar en persona (batalla táctica) o confiar en los capitanes. */
+  function askBattleMode(
+    state: GameState, provinceId: ProvinceId, onChoose: (mode: 'tactical' | 'auto') => void,
+  ): void {
+    const province = state.provinces.find(p => p.id === provinceId);
+    const backdrop = el('div', { className: 'modal-backdrop is-visible' });
+    Object.assign(backdrop.style, {
+      position: 'fixed', inset: '0', zIndex: '95', background: 'rgba(20,17,15,.72)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto',
+    } as Partial<CSSStyleDeclaration>);
+    const box = el('div', {});
+    Object.assign(box.style, {
+      background: '#1B1716', border: '1px solid rgba(237,235,222,.14)', borderRadius: '2px',
+      padding: '22px 26px', maxWidth: '420px', textAlign: 'center',
+    } as Partial<CSSStyleDeclaration>);
+    const title = el('h2', { className: 'panel-title' }, [`Batalla por ${province?.name ?? 'la provincia'}`]);
+    const sub = el('p', { className: 'notice' }, ['El enemigo presenta batalla. ¿Quién dará las órdenes?']);
+    const mkBtn = (label: string, primary: boolean, mode: 'tactical' | 'auto'): HTMLElement => {
+      const b = el('button', {
+        type: 'button',
+        className: primary ? 'btn btn--primary' : 'btn',
+        onclick: () => { backdrop.remove(); onChoose(mode); },
+      }, [label]);
+      (b as HTMLElement).style.margin = '6px';
+      return b;
+    };
+    box.append(title, sub, mkBtn('Comandar en persona', true, 'tactical'), mkBtn('Confiar en los capitanes', false, 'auto'));
+    backdrop.append(box);
+    document.body.appendChild(backdrop);
   }
 
   function render(): void {

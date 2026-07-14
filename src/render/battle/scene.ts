@@ -39,6 +39,7 @@ interface UnitView {
   glyph: Phaser.GameObjects.Text;
   lastKey: string;
   colorHex: string;
+  lastR: number;
 }
 
 interface Drop { x: number; y: number; vx: number; vy: number; len: number }
@@ -266,7 +267,7 @@ export class BattleScene extends Phaser.Scene {
       fontSize: '16px',
     }).setOrigin(0.5);
     const container = this.add.container(0, 0, [disc, bars, glyph]).setDepth(DEPTH.unit);
-    const v: UnitView = { id: u.id, container, disc, bars, glyph, lastKey: '', colorHex: '' };
+    const v: UnitView = { id: u.id, container, disc, bars, glyph, lastKey: '', colorHex: '', lastR: -1 };
     this.views.set(u.id, v);
     return v;
   }
@@ -280,9 +281,10 @@ export class BattleScene extends Phaser.Scene {
     const key = hexKey(u.coord);
     const colorHex = this.host.unitColorHex(u);
 
-    // ficha (redibujar sólo si cambia color o radio via key de layout)
-    if (v.colorHex !== colorHex) {
+    // ficha: redibujar si cambia el color o el radio (p.ej. tras un resize)
+    if (v.colorHex !== colorHex || v.lastR !== R) {
       v.colorHex = colorHex;
+      v.lastR = R;
       const fill = hexToNum(colorHex);
       v.disc.clear();
       v.disc.fillStyle(fill, 1);

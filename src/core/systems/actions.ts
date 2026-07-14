@@ -70,7 +70,7 @@ function chronicleDateText(state: GameState): string {
 }
 
 /** Cambia el dueño de la provincia, registra crónica y ajusta warScore si aplica. */
-function occupyProvince(state: GameState, factionId: FactionId, province: Province): void {
+export function occupyProvince(state: GameState, factionId: FactionId, province: Province): void {
   const prevOwnerId = province.ownerId;
   province.ownerId = factionId;
   const conqueror = state.factions[factionId];
@@ -368,4 +368,34 @@ export function negotiatePeace(
     ok: true,
     message: `Paz firmada entre la Casa ${attacker.dynastyName} y la Casa ${defender.dynastyName}: ${termsText}.`,
   };
+}
+
+// ---------- puente con la capa táctica (integración GDD §8) ----------
+
+/** true si mover ese ejército ahí desencadena batalla (para ofrecer mando táctico). */
+export function wouldTriggerBattle(
+  state: GameState, armyId: ArmyId, toProvinceId: ProvinceId,
+): boolean {
+  const army = state.armies[armyId];
+  if (!army || army.movement <= 0) return false;
+  if (!legalMoves(state, armyId).includes(toProvinceId)) return false;
+  const province = findProvince(state, toProvinceId);
+  if (!province || province.ownerId === army.factionId) return false;
+  return hasDefense(state, province, army.factionId);
+}
+
+/**
+ * Mueve el ejército a la provincia hostil SIN resolver la batalla: la resuelve
+ * la capa táctica (createTacticalBattle espera a los atacantes YA en la provincia).
+ */
+export function moveArmyIntoBattle(
+  state: GameState, armyId: ArmyId, toProvinceId: ProvinceId,
+): ActionResult {
+  if (!wouldTriggerBattle(state, armyId, toProvinceId)) {
+    return { ok: false, message: 'Ahí no hay batalla que librar.' };
+  }
+  const army = state.armies[armyId];
+  army.movement -= 1;
+  army.provinceId = toProvinceId;
+  return { ok: true, message: 'Los ejércitos se avistan en el campo.' };
 }
