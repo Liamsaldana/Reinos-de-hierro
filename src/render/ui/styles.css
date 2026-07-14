@@ -890,7 +890,7 @@
 
 .toast-stack {
   position: fixed;
-  right: 16px;
+  right: 262px; /* deja libre el minimapa (esquina inferior derecha) */
   bottom: 16px;
   z-index: 80;
   display: flex;

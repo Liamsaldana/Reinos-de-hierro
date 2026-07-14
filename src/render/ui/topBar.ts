@@ -44,7 +44,7 @@ export function createTopBar(container: HTMLElement, store: GameStore, onEndTurn
     replaceChildren(bar, [
       el('div', { className: 'topbar__left' }, [
         el('span', { className: 'topbar__date' }, [`${season} · Año ${year}`]),
-        el('span', { className: 'topbar__dynasty' }, [faction ? `Casa ${faction.dynastyName}` : '—']),
+        el('span', { className: 'topbar__dynasty' }, [faction ? faction.dynastyName : '—']),
       ]),
       el('div', { className: 'topbar__resources' }, [
         resourceChip('⛁', 'Oro', faction ? fmt(faction.gold) : '—'),
