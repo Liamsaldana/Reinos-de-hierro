@@ -1,8 +1,9 @@
 /**
- * Culturas y religiones v1 (GDD §2.2–2.3). Alcance v1: 3 de las 5 culturas
- * del GDD (aurelios, norlander, estepara — sarradio y highland entran en
- * Fase 3) y las 3 religiones mayores.
- * AGENTE B: reemplaza el contenido. MANTÉN las firmas exportadas.
+ * Culturas y religiones (GDD §2.2–2.3). Fase 3 (GDD §2.2, §2.4): entran las
+ * 5 culturas completas — aurelios, norlander y estepara (v1) más sarradio y
+ * highland, que ya tienen casa jugable propia (ver content/newGame.ts) — y
+ * las 3 religiones mayores.
+ * AGENTE T: banco de culturas cerrado en 5. MANTÉN las firmas exportadas.
  */
 import type { CultureId, ReligionId } from '../types';
 
@@ -47,7 +48,26 @@ export const CULTURES: Record<CultureId, CultureDef> = {
     attackMod: 1.0,
     cavalryMod: 1.25,
   },
-} as Record<CultureId, CultureDef>;
+  sarradio: {
+    id: 'sarradio',
+    name: 'Sarradio',
+    blurb: 'Mercaderes y sabios del litoral levantino: caravanas, bibliotecas y una balanza que rinde más oro que la lanza.',
+    taxMod: 1.1,
+    attackMod: 0.95,
+    cavalryMod: 1.0,
+  },
+  highland: {
+    id: 'highland',
+    name: 'Highland',
+    blurb: 'Clanes de las tierras altas: ceden poco y tarde, atrincherados en el desfiladero que conocen palmo a palmo.',
+    taxMod: 0.95,
+    // no es más agresivo: es un pueblo que vende cara cada cuesta y cada muro — el número
+    // premia la tenacidad defensiva del clan, no la carga (coherente con GDD §2.2: "defensa/terreno").
+    attackMod: 1.05,
+    // terreno de montaña, pocos pastos: la caballería highland nunca fue su fuerte.
+    cavalryMod: 0.9,
+  },
+};
 
 export const RELIGIONS: Record<ReligionId, ReligionDef> = {
   aureismo: {

@@ -12,6 +12,10 @@ import { tickSieges } from './siege';
 import { tickConstruction } from './construction';
 import { tickResearch } from './research';
 import { marriageHeirFaction, transferRealm } from './diplomacy';
+import { tickMythic } from '../mythic';
+import { tickImperial } from './imperial';
+import { updateVictoryProgress, checkExtraVictories } from './victory';
+import { tradeIncome, luxuryLegitimacy, tributeFlows } from './trade';
 import {
   armiesOf, clamp, foodConsumption, foodProduction, legitimacyTick, manpowerCap, manpowerGain,
   provincesOf, taxIncome, upkeepCost,
@@ -67,7 +71,8 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
   // 2. IA: cada facción viva no jugadora ejecuta su turno.
   const battleBeforeAI = state.lastBattle;
   for (const factionId of livingFactionIds(state)) {
-    if (state.factions[factionId].ai === 'player') continue;
+    const ai = state.factions[factionId].ai;
+    if (ai === 'player' || ai === 'palidos') continue; // los Pálidos los conduce tickMythic
     runFactionAI(state, rng, factionId);
   }
   if (state.lastBattle && state.lastBattle !== battleBeforeAI) {
@@ -83,8 +88,11 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
   // 3. Economía: ingresos - mantenimiento.
   for (const factionId of livingFactionIds(state)) {
     const faction = state.factions[factionId];
-    faction.legitimacy = clamp(faction.legitimacy + legitimacyTick(state, factionId), 0, 100);
-    const income = taxIncome(state, factionId, currentSeason);
+    faction.legitimacy = clamp(
+      faction.legitimacy + legitimacyTick(state, factionId) + luxuryLegitimacy(state, factionId),
+      0, 100,
+    );
+    const income = taxIncome(state, factionId, currentSeason) + tradeIncome(state, factionId);
     const upkeep = upkeepCost(state, factionId);
     const net = Math.floor(income - upkeep);
     faction.gold += net;
@@ -229,8 +237,19 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
     war.exhaustionAttacker = Math.min(100, war.exhaustionAttacker + 2);
     war.exhaustionDefender = Math.min(100, war.exhaustionDefender + 2);
   }
+  // Tributos de vasallaje (Fase 3): fluyen tras aplicar el oro normal.
+  for (const flow of tributeFlows(state)) {
+    const from = state.factions[flow.from];
+    const to = state.factions[flow.to];
+    if (!from || !to) continue;
+    const paid = Math.min(from.gold, flow.gold);
+    from.gold -= paid;
+    to.gold += paid;
+  }
+
   for (const factionId of livingFactionIds(state)) {
     const faction = state.factions[factionId];
+    if (faction.ai === 'palidos') continue; // hueste, no reino: no se extingue por no tener provincias
     const hasProvinces = provincesOf(state, factionId).length > 0;
     if (!hasProvinces) {
       faction.alive = false;
@@ -248,7 +267,16 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
     }
   }
 
+  // 7.5 Remanente Imperial y capa mítica (Fase 3): ANTES del chequeo de victoria.
+  playerMessages.push(...tickImperial(state, rng));
+  playerMessages.push(...tickMythic(state, rng));
+
   // 8. Victoria/derrota del jugador (si aún no hay un desenlace fijado).
+  if (state.outcome === 'ongoing') {
+    updateVictoryProgress(state);
+    const extra = checkExtraVictories(state);
+    if (extra) state.outcome = extra;
+  }
   if (state.outcome === 'ongoing') {
     const playerProvinces = provincesOf(state, playerId);
     if (playerProvinces.length === 0) {

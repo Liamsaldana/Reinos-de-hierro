@@ -1,14 +1,20 @@
 /**
  * Generador procedural del continente Valdemar (GDD §2.1, §4.2, §17.2.3):
  * rejilla 8×5 (40 provincias), geografía por zona, recursos, asentamientos,
- * nombres y adyacencia. Módulo INTERNO del Agente B — no forma parte del
+ * nombres y adyacencia. Módulo INTERNO del Agente T — no forma parte del
  * contrato público del core; solo lo consume newGame.ts.
  *
  * TODO determinista: cada número sale de `rng`, nunca de Math.random/Date.now.
  * El orden de consumo del Rng es fijo (ver generateProvinces): mismo seed →
  * mismo mapa, siempre.
+ *
+ * Fase 3 (GDD §2.5, §5.1): suma bienes de lujo (2 provincias por lujo, ancladas
+ * a la zona que le da sabor: sal en costa, vino en llanura del centro, seda en
+ * estepa, especias en el sur desértico) y el vidrio ígneo, exclusivo de Las
+ * Fauces — la única provincia de montaña volcánica del mapa (ver FAUCES_ROW/COL
+ * más abajo). La geografía/rejilla en sí NO cambia respecto a fases previas.
  */
-import type { Province, ProvinceId, Settlement, Terrain } from '../types';
+import type { LuxuryId, Province, ProvinceId, Settlement, Terrain } from '../types';
 import type { Rng } from '../state/rng';
 import {
   NORTH_PROVINCE_NAMES, COAST_PROVINCE_NAMES, SOUTH_PROVINCE_NAMES, FAUCES_NAME,
@@ -118,6 +124,51 @@ function assignResources(rng: Rng, cells: Cell[]): { iron: Set<ProvinceId>; hors
   for (const c of rng.shuffle([...horseCandidates]).slice(0, 6)) horses.add(c.id);
 
   return { iron, horses };
+}
+
+/**
+ * Bienes de lujo (Fase 3, GDD §5.1): EXACTAMENTE 2 provincias por lujo, cada
+ * una anclada a la zona/terreno que le da sabor —
+ *   sal → costa · vino → llanura del centro · seda → estepa · especias → sur
+ *     desértico —
+ * para un total fijo de 8 provincias con `luxury`. `zone`/`south`/`steppe`/
+ * `coast` son SIEMPRE su terreno propio (ver buildCells: sin roll), así que
+ * esas 3 candidaturas nunca fallan; solo "centro Y llanura" cruza dos
+ * condiciones (el centro también puede salir bosque/colina/pantano), así que
+ * lleva una reserva: si el roll de terreno deja menos de 2 llanuras en el
+ * centro, complementa con cualquier otra provincia de centro libre, para que
+ * el total de 'vino' sea siempre exactamente 2, cualquiera que sea la semilla.
+ */
+function assignLuxuries(rng: Rng, cells: Cell[]): Map<ProvinceId, LuxuryId> {
+  const luxuries = new Map<ProvinceId, LuxuryId>();
+
+  function place(lux: LuxuryId, primary: Cell[], fallback: Cell[]): void {
+    const chosen = rng.shuffle([...primary]).slice(0, 2);
+    if (chosen.length < 2) {
+      const chosenIds = new Set(chosen.map(c => c.id));
+      const extra = rng.shuffle([...fallback].filter(c => !chosenIds.has(c.id)));
+      for (const c of extra) {
+        if (chosen.length >= 2) break;
+        chosen.push(c);
+      }
+    }
+    for (const c of chosen) luxuries.set(c.id, lux);
+  }
+
+  const coast = cells.filter(c => c.zone === 'coast');
+  place('sal', coast, coast);
+
+  const centerPlains = cells.filter(c => c.zone === 'center' && c.terrain === 'plains');
+  const center = cells.filter(c => c.zone === 'center');
+  place('vino', centerPlains, center);
+
+  const steppe = cells.filter(c => c.zone === 'steppe');
+  place('seda', steppe, steppe);
+
+  const south = cells.filter(c => c.zone === 'south');
+  place('especias', south, south);
+
+  return luxuries;
 }
 
 function assignNames(rng: Rng, cells: Cell[]): Map<ProvinceId, string> {
@@ -239,6 +290,7 @@ export function generateProvinces(rng: Rng): Province[] {
 
   const names = assignNames(rng, cells);
   const { iron, horses } = assignResources(rng, cells);
+  const luxuries = assignLuxuries(rng, cells);
   const neighborMap = buildNeighbors(rng);
 
   return cells.map((c): Province => {
@@ -262,6 +314,10 @@ export function generateProvinces(rng: Rng): Province[] {
       baseManpower: econ.baseManpower,
       // tierra sin señor por defecto; newGame.ts reasigna si acaba con dueño.
       garrison: rng.int(300, 800),
+      // Fase 3 (GDD §5.1, §2.5): lujo local (2 provincias × 4 tipos) y el
+      // vidrio ígneo, exclusivo de Las Fauces (única provincia de zona 'fauces').
+      luxury: luxuries.get(c.id) ?? null,
+      vidrioIgneo: c.zone === 'fauces',
     };
   });
 }

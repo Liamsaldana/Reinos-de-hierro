@@ -95,17 +95,27 @@ export function powerScore(state: GameState, factionId: FactionId): number {
 }
 
 /** true si `factionId` es la mayor potencia viva del mundo (empate en la cima → false: exige ser el único primero). */
+/**
+ * Margen de dominio real para contar hegemonía: hay que superar al segundo
+ * en 1.4× (calibración de integración: con 5 reinos simétricos, exigir solo
+ * "el mayor" hacía que un jugador PASIVO ganara por hegemonía en ~16-24
+ * turnos mientras las IA se desangraban entre sí — verificado en el harness
+ * de simulación, semillas 11/47).
+ */
+const HEGEMONY_LEAD_RATIO = 1.4;
+
 export function isLeadingPower(state: GameState, factionId: FactionId): boolean {
   const me = state.factions[factionId];
   if (!me || !me.alive) return false;
   const myScore = powerScore(state, factionId);
+  let bestOther = 0;
   for (const otherId of Object.keys(state.factions)) {
     if (otherId === factionId) continue;
     const other = state.factions[otherId];
     if (!other || !other.alive) continue;
-    if (powerScore(state, otherId) >= myScore) return false;
+    bestOther = Math.max(bestOther, powerScore(state, otherId));
   }
-  return true;
+  return myScore >= bestOther * HEGEMONY_LEAD_RATIO;
 }
 
 /**

@@ -17,10 +17,10 @@ Arreglo: `garrisonDefensePower()` reconstruye la potencia de guarnición EN LAS 
 
 | Semilla | Guerras declaradas | Batallas | Provincias que cambiaron de dueño | Conquistas (a un rival) | Facciones vivas @turno15 | Facciones vivas @final | Oro medio | Duración (ms) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 11 | 2 | 18 | 18 | 4 | 3 | 3 | 464 | 171 |
-| 23 | 2 | 21 | 20 | 6 | 3 | 3 | 518 | 112 |
-| 47 | 3 | 20 | 28 | 14 | 3 | 3 | 174 | 120 |
+| 11 | 4 | 8 | 11 | 9 | 5 | 5 | 642 | 188 |
+| 23 | 2 | 12 | 13 | 11 | 5 | 5 | 585 | 81 |
+| 47 | 2 | 5 | 10 | 8 | 5 | 5 | 605 | 86 |
 
-Actividad de IA acumulada en las 3 semillas: 7 guerra(s) declarada(s), 59 batalla(s), 66 cambio(s) de dueño de provincia (de ellos, 24 conquistados a un rival vivo, no tierra sin señor).
+Actividad de IA acumulada en las 3 semillas: 8 guerra(s) declarada(s), 25 batalla(s), 34 cambio(s) de dueño de provincia (de ellos, 28 conquistados a un rival vivo, no tierra sin señor).
 
-Criterio de éxito (AGENTE N): batallas totales >=4 (OK), cambios de dueño totales >=6 (OK), >=1 conquista en CADA semilla (OK), y >=2 de 3 semillas con las 3 facciones vivas al turno 15, sin exterminio relámpago (OK).
+Criterio de éxito (AGENTE N): batallas totales >=4 (OK), cambios de dueño totales >=6 (OK), >=1 conquista en CADA semilla (OK), y >=2 de 3 semillas con las 3 facciones vivas al turno 15, sin exterminio relámpago (FALLA).

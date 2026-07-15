@@ -25,7 +25,7 @@ import {
   advanceTurn, emptyMetrics, isPendingError, snapshotOwners, type SimMetrics,
 } from './helpers/simMetrics';
 
-const VALID_OUTCOMES = ['ongoing', 'victory_conquest', 'defeat_extinction', 'defeat_conquered'];
+const VALID_OUTCOMES = ['ongoing', 'victory_conquest', 'defeat_extinction', 'defeat_conquered', 'victory_larga_noche', 'victory_restauracion', 'victory_hegemonia', 'defeat_palidos'];
 
 const SHORT_SEEDS = [11, 23, 47];
 const SHORT_TURNS = 30;
@@ -188,6 +188,22 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I / AGENT
         ).toBeGreaterThanOrEqual(1);
 
         const aliveFactions = Object.values(state.factions).filter(f => f.alive);
+
+        // AGENTE T (Fase 3, GDD §2.2/§2.4): el mundo pasó de 3 a 5 facciones
+        // jugables, así que "vida del mundo" ya no puede seguir pidiendo un
+        // umbral pensado para 3. Con 5 reinos en juego, exigimos que al menos
+        // 3 sigan vivos al cabo de ${SHORT_TURNS} turnos: bastante por debajo
+        // del máximo (5) para no exigir un mundo tibio, pero suficiente para
+        // atrapar un "exterminio relámpago" (colapso a 1-2 facciones) que
+        // dejaría la partida corta resuelta antes de tiempo. Verificado con
+        // datos reales (evidence/sim_report.md): las 3 semillas cortas
+        // terminan hoy con las 5 facciones vivas — este umbral tiene margen.
+        expect(
+          aliveFactions.length,
+          `seed ${seed}: solo ${aliveFactions.length} facción(es) viva(s) al final de ${SHORT_TURNS} turnos `
+            + '(se pedían >=3 de 5) — con 5 reinos en juego (Fase 3) esto sería un exterminio relámpago.',
+        ).toBeGreaterThanOrEqual(3);
+
         const avgGold = aliveFactions.length
           ? aliveFactions.reduce((sum, f) => sum + f.gold, 0) / aliveFactions.length
           : 0;
@@ -207,7 +223,7 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I / AGENT
       });
     }
 
-    it('agregado de las 3 semillas: >=4 batallas, >=6 cambios de dueño, y >=2 semillas con las 3 facciones vivas al turno 15 (sin exterminio relámpago)', (ctx) => {
+    it('agregado de las 3 semillas: >=4 batallas, >=6 cambios de dueño, y >=2 semillas con >=4 de 5 facciones vivas al turno 15 (sin exterminio relámpago)', (ctx) => {
       guardOrSkip(ctx);
       // Depende de que las 3 `it` de arriba ya hayan corrido y llenado
       // `reportRows` (vitest ejecuta los `it` de un mismo archivo en orden,
@@ -219,7 +235,14 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I / AGENT
 
       const totalBattles = reportRows.reduce((s, r) => s + r.battles, 0);
       const totalOwnerChanges = reportRows.reduce((s, r) => s + r.ownerChanges, 0);
-      const seedsWithAllAliveAt15 = reportRows.filter((r) => r.aliveAt15 === 3).length;
+      // AGENTE T (Fase 3): eran "3 semillas con las 3 facciones vivas" cuando
+      // el mundo tenía 3 casas; con 5 casas jugables el umbral equivalente es
+      // "≥4 de 5 vivas" (permite UNA baja temprana sin contarlo como
+      // exterminio relámpago) — el resto del criterio (≥2 de 3 semillas) no
+      // cambia. Datos reales (evidence/sim_report.md): hoy las 3 semillas
+      // llegan al turno 15 con las 5 facciones vivas, así que el umbral tiene
+      // margen de sobra para absorber variación futura del balance de la IA.
+      const seedsWithAllAliveAt15 = reportRows.filter((r) => r.aliveAt15 >= 4).length;
 
       expect(
         totalBattles,
@@ -231,7 +254,7 @@ describe('Harness de simulación — el mundo vive sin jugador (AGENTE I / AGENT
       ).toBeGreaterThanOrEqual(6);
       expect(
         seedsWithAllAliveAt15,
-        `solo ${seedsWithAllAliveAt15} de ${SHORT_SEEDS.length} semillas llegan al turno 15 con las 3 facciones `
+        `solo ${seedsWithAllAliveAt15} de ${SHORT_SEEDS.length} semillas llegan al turno 15 con >=4 de 5 facciones `
           + `vivas (se pedían >=2) — aliveAt15 por semilla: ${reportRows.map((r) => `${r.seed}:${r.aliveAt15}`).join(', ')}.`,
       ).toBeGreaterThanOrEqual(2);
     });

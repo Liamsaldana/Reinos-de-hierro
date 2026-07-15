@@ -3,7 +3,7 @@ import { newGame } from '../src/core/content/newGame';
 import { endTurn } from '../src/core/systems/turn';
 import { Rng } from '../src/core/state/rng';
 
-const VALID_OUTCOMES = ['ongoing', 'victory_conquest', 'defeat_extinction', 'defeat_conquered'];
+const VALID_OUTCOMES = ['ongoing', 'victory_conquest', 'defeat_extinction', 'defeat_conquered', 'victory_larga_noche', 'victory_restauracion', 'victory_hegemonia', 'defeat_palidos'];
 
 describe('endTurn', () => {
   it('avanza el turno', () => {

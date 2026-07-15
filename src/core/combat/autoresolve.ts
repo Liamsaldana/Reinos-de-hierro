@@ -29,6 +29,8 @@ import type {
 import { SEASON_NAMES, seasonOf, yearOf } from '../types';
 import type { Rng } from '../state/rng';
 import { getUnitType } from '../content/units';
+// ciclo autoresolve→mythic→actions→autoresolve: solo llamadas en runtime, patrón establecido
+import { palidosResistanceFactor, weaponOfGeneral } from '../mythic';
 import {
   applyCounters, average, categoryFractions, culturalAttackMod,
   distributeCasualties, generalMultiplier, rollWeather, squadPower,
@@ -199,6 +201,23 @@ export function resolveBattleAt(
 
   const defenderFactionId: FactionId | null = province.ownerId ?? defenderFactionCandidates[0] ?? null;
 
+  // ---------- capa mítica (Fase 3, integración): el acero común apenas los hiere ----------
+  const PALIDOS_ID: FactionId = 'los_palidos';
+  function sideMythicFactor(sideSquads: Squad[], enemyId: FactionId | null): number {
+    if (enemyId !== PALIDOS_ID) return 1;
+    let best = 0.45; // sin vidrio ígneo ni acero estelar: resistencia pálida
+    const seenArmies = new Set<string>();
+    for (const sq of sideSquads) {
+      if (!sq.armyId || seenArmies.has(sq.armyId)) continue;
+      seenArmies.add(sq.armyId);
+      const army = state.armies[sq.armyId];
+      if (army) best = Math.max(best, palidosResistanceFactor(state, army, enemyId));
+    }
+    return best;
+  }
+  const mythicFactorA = sideMythicFactor(attackers, defenderFactionId);
+  const mythicFactorB = sideMythicFactor(defenders, attackerFactionId);
+
   // ---------- clima / terreno ----------
   const season = seasonOf(state.turn);
   const weather = rollWeather(season, rng.next());
@@ -250,8 +269,16 @@ export function resolveBattleAt(
     sA *= terrainFx.attackerTotalMod;
     sB *= terrainFx.defenderTotalMod;
     if (defenderOwnsProvince) sB *= (1 + fortLevel * 0.12);
-    if (attackerGeneral) sA *= generalMultiplier(attackerGeneral.character.attributes.martial, attackerGeneral.character.traits);
-    if (defenderGeneral) sB *= generalMultiplier(defenderGeneral.character.attributes.martial, defenderGeneral.character.traits);
+    sA *= mythicFactorA;
+    sB *= mythicFactorB;
+    if (attackerGeneral) {
+      const weaponBonus = weaponOfGeneral(state, attackerGeneral.character.id)?.bonusMartial ?? 0;
+      sA *= generalMultiplier(attackerGeneral.character.attributes.martial + weaponBonus, attackerGeneral.character.traits);
+    }
+    if (defenderGeneral) {
+      const weaponBonus = weaponOfGeneral(state, defenderGeneral.character.id)?.bonusMartial ?? 0;
+      sB *= generalMultiplier(defenderGeneral.character.attributes.martial + weaponBonus, defenderGeneral.character.traits);
+    }
     return { sA: Math.max(0, sA), sB: Math.max(0, sB) };
   }
 
