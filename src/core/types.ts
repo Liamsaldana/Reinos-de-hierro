@@ -248,6 +248,8 @@ export interface MythicState {
   /** la Gran Tregua está sellada entre las casas vivas */
   granTregua: boolean;
   namedWeapons: NamedWeapon[];
+  /** ejércitos equipados con puntas de vidrio ígneo (hieren a los Pálidos) */
+  vidrioArmies?: ArmyId[];
 }
 
 // ---------- batalla (auto-resolución, GDD §8.4) ----------
@@ -309,6 +311,8 @@ export interface GameState {
   sieges?: Siege[];
   /** capa mítica (Fase 3; opcional: saves previos siguen válidos) */
   mythic?: MythicState;
+  /** turnos consecutivos que el jugador lleva siendo la mayor potencia (victoria por hegemonía) */
+  hegemonyStreakPlayer?: number;
 }
 
 // ---------- helpers derivados (puros) ----------
