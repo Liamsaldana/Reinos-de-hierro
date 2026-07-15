@@ -3,3 +3,4 @@ dist/
 .atelier/
 *.log
 .DS_Store
+dist-artifact/

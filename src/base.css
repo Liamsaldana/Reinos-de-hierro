@@ -1,0 +1,20 @@
+/* Capa base de layout (main). La piel de la UI vive en render/ui/styles.css. */
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #14110f;
+}
+#app {
+  position: fixed;
+  inset: 0;
+}
+#app canvas {
+  display: block;
+}
+#ui-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
