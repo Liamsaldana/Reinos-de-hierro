@@ -49,14 +49,32 @@
  *    decide `turn.ts` con su propia secuencia (evita presuponer el orden
  *    exacto de la sección 6/7 de `endTurn`, que es propiedad de otro agente).
  * ---------------------------------------------------------------------------
+ *
+ * AGENTE U (Fase 3, GDD §10 "poder blando"): sumó vasallaje (`proposeVassalage`
+ * + el arrastre de VASALLOS a la guerra en `joinAlliesToWar`, single-hop,
+ * mismo patrón que los aliados) y sobornos (`bribeOpinion`,
+ * `bribeBreakAlliance`) — todo aditivo, sin tocar las firmas existentes.
+ * También añadió el veto de vasallos en `canDeclareWar` (un vasallo no
+ * declara guerra por su cuenta; a un vasallo no se le declara la guerra
+ * directamente, se le declara a su señor) y, en `breakTreaty`, la limpieza
+ * de `vassalOfId` cuando el tratado roto es 'vassalage' (mismo patrón que ya
+ * existía para limpiar `truceUntilTurn` al romper 'non_aggression' — sin
+ * esto, romper el vínculo dejaría `Faction.vassalOfId` desincronizado del
+ * propio tratado). El resto del archivo es de AGENTE R. Comercio/lujos
+ * (`tradeIncome`, `luxuryLegitimacy`, `tributeFlows`, `proposeTradeTreaty`) y
+ * espionaje (`sabotageGarrison`, `scoutFaction`) viven en módulos nuevos
+ * separados: `./trade` y `./espionage` (mismo motivo que separó
+ * `religion.ts` de `economy.ts` en Fase 2: módulo nuevo y chico en vez de
+ * inflar uno existente).
  */
 import type {
   DiploRelation, FactionId, GameState, TreatyType, War,
 } from '../types';
 import { relKey, seasonOf, yearOf, SEASON_NAMES } from '../types';
 import type { Rng } from '../state/rng';
-import { clamp } from './economy';
+import { clamp, provincesOf } from './economy';
 import type { ActionResult } from './actions';
+import { armyStrength } from '../combat/autoresolve';
 
 // ---------- helpers internos (duplicados a propósito, ver docstring) ----------
 
@@ -313,6 +331,14 @@ export function breakTreaty(
 
   rel.treaties = rel.treaties.filter((t) => t !== treaty);
   if (treaty === 'non_aggression') delete rel.truceUntilTurn;
+  // Vasallaje (Fase 3, AGENTE U): romperlo debe liberar de verdad — si no se
+  // limpia `vassalOfId`, quedaría desincronizado del propio tratado (el
+  // vasallo seguiría vetado en `canDeclareWar`/arrastrado en
+  // `joinAlliesToWar`/cobrado en `tributeFlows` sin que exista ya el vínculo).
+  if (treaty === 'vassalage') {
+    if (other.vassalOfId === breakerId) other.vassalOfId = null;
+    else if (breaker.vassalOfId === otherId) breaker.vassalOfId = null;
+  }
   rel.opinion = clamp(rel.opinion - 30, -100, 100);
   breaker.legitimacy = clamp(breaker.legitimacy - 10, 0, 100);
 
@@ -343,6 +369,23 @@ export function canDeclareWar(state: GameState, aId: FactionId, bId: FactionId):
   const a = state.factions[aId];
   const b = state.factions[bId];
   if (!a || !b) return { ok: false, reason: 'Facción desconocida.' };
+  // Vasallaje (Fase 3, GDD §10, AGENTE U): un vasallo no declara guerras por
+  // su cuenta, y a un vasallo no se le declara la guerra directamente — hay
+  // que declarársela a su señor (que arrastrará a sus vasallos consigo, ver
+  // `joinAlliesToWar`).
+  if (a.vassalOfId) {
+    return {
+      ok: false,
+      reason: `${a.dynastyName} es vasalla y no puede declarar la guerra por su cuenta: debe seguir a su señor.`,
+    };
+  }
+  if (b.vassalOfId) {
+    const overlord = state.factions[b.vassalOfId];
+    return {
+      ok: false,
+      reason: `${b.dynastyName} es vasalla de ${overlord ? overlord.dynastyName : b.vassalOfId}: declarad la guerra a su señor.`,
+    };
+  }
   if (isAtWar(state, aId, bId)) {
     return { ok: false, reason: `Ya hay guerra entre ${a.dynastyName} y ${b.dynastyName}.` };
   }
@@ -408,6 +451,43 @@ export function joinAlliesToWar(state: GameState, war: War): string[] {
 
     const text = `En ${chronicleDateText(state)}, la Casa ${ally.dynastyName} acude en defensa de su aliada `
       + `la Casa ${defender.dynastyName} y entra en guerra contra la Casa ${attacker.dynastyName}.`;
+    state.chronicle.push({ turn: state.turn, kind: 'guerra', text });
+    messages.push(text);
+  }
+
+  // Vasallaje arrastra a la guerra (Fase 3, GDD §10, AGENTE U): mismo patrón
+  // que los aliados de arriba (guerra espejo + opinión -30 + crónica), pero
+  // por juramento de vasallaje en vez de alianza. Un solo salto (no arrastra
+  // vasallos de vasallos). Se duplica el cuerpo del bucle en vez de
+  // refactorizar el de arriba a propósito: cero riesgo de tocar el
+  // comportamiento ya probado de los aliados (mismo motivo documentado en
+  // el docstring del archivo). El guard `isAtWar` de abajo también evita una
+  // guerra duplicada si una facción fuese, a la vez, aliada Y vasalla del
+  // defensor (el bucle de aliados ya la habría metido en guerra primero).
+  for (const vassalId of vassalsOf(state, war.defenderId)) {
+    if (vassalId === war.attackerId) continue;
+    if (isAtWar(state, war.attackerId, vassalId)) continue;
+    const vassal = state.factions[vassalId];
+    if (!vassal || !vassal.alive) continue;
+
+    const mirrorWar: War = {
+      id: uniqueWarId(state, war.attackerId, vassalId),
+      attackerId: war.attackerId,
+      defenderId: vassalId,
+      cb: war.cb,
+      warScore: 0,
+      exhaustionAttacker: 0,
+      exhaustionDefender: 0,
+      startedTurn: state.turn,
+    };
+    state.wars.push(mirrorWar);
+
+    const rel = getRelation(state, war.attackerId, vassalId);
+    rel.opinion = clamp(rel.opinion - 30, -100, 100);
+
+    const text = `En ${chronicleDateText(state)}, la Casa ${vassal.dynastyName}, vasalla de la Casa `
+      + `${defender.dynastyName}, acude en su defensa por juramento de sangre y entra en guerra contra `
+      + `la Casa ${attacker.dynastyName}.`;
     state.chronicle.push({ turn: state.turn, kind: 'guerra', text });
     messages.push(text);
   }
