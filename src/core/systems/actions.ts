@@ -10,6 +10,9 @@ import { SEASON_NAMES, relKey, seasonOf, yearOf } from '../types';
 import type { Rng } from '../state/rng';
 import { getUnitType } from '../content/units';
 import { resolveBattleAt } from '../combat/autoresolve';
+import { startSiege } from './siege';
+import { canDeclareWar, joinAlliesToWar } from './diplomacy';
+import { isUnitUnlocked } from './research';
 import { clamp, factionHasResource } from './economy';
 
 export interface ActionResult {
@@ -63,6 +66,52 @@ function hasDefense(state: GameState, province: Province, movingFactionId: Facti
   return Object.values(state.armies).some(
     a => a.provinceId === province.id && a.factionId !== movingFactionId,
   );
+}
+
+/**
+ * Fortificación mínima que abre asedio en vez de batalla instantánea.
+ * CALIBRACIÓN (evidence/dogfood_atelier.md del runtime de construcción, ver
+ * reporte del Agente O): `content/mapgen.ts` sortea `fortLevel` 0/1 para
+ * TODA provincia normal (nunca 2/3); solo las capitales llegan a fortLevel 2
+ * (`content/newGame.ts`). Con el umbral en 1 (el de la spec original), el
+ * harness de simulación (`tests/simulation.test.ts`, sin jugador) se
+ * atascaba en la semilla 47: sin `tickSieges` todavía cableado en
+ * `turn.ts:endTurn` (tarea del integrador — ver KERNEL.md v.s. este reporte),
+ * un asedio nunca se resuelve solo, y el BFS de `factionAI.ts` siempre repite
+ * el objetivo enemigo MÁS CERCANO — si ese objetivo es una `empalizada`
+ * (fortLevel 1) con guarnición, TODOS los ejércitos de esa facción se
+ * apilan ahí para siempre (una semilla mostró 11 sitiadores en un único
+ * cerco muerto) y la facción no vuelve a conquistar nada en 30 turnos.
+ * Subir el umbral a 2 (muralla/ciudadela: solo capitales) deja intacta la
+ * velocidad de conquista de siempre para el 90% del mapa (empalizadas caen
+ * en batalla instantánea, como antes de esta feature) y reserva el asedio
+ * de verdad para el blanco narrativamente correcto — la capital enemiga —
+ * sin bloquear al mundo sin jugador. Candidato a bajar a 1 en cuanto el
+ * integrador cablee `tickSieges` en `endTurn` (con eso, un asedio SÍ se
+ * resuelve solo en unos turnos y este riesgo desaparece).
+ */
+const SIEGE_MIN_FORT_LEVEL = 1; // tickSieges ya vive en endTurn: empalizadas también sitian
+
+/** true si hay ejércitos de otra facción físicamente en la provincia (fuera de los muros). */
+function hasFieldArmies(state: GameState, provinceId: ProvinceId, movingFactionId: FactionId): boolean {
+  return Object.values(state.armies).some(
+    a => a.provinceId === provinceId && a.factionId !== movingFactionId,
+  );
+}
+
+/**
+ * true si entrar en `province` con `movingFactionId` abre un ASEDIO (Fase 2,
+ * GDD §9.2) en vez de una batalla instantánea: la provincia tiene dueño
+ * enemigo (nunca tierra sin señor — `legalMoves` ya garantiza que si hay
+ * dueño distinto es porque hay guerra), está fortificada, la defiende su
+ * guarnición, y NO hay ejércitos hostiles en campo (esos sí dan batalla
+ * campal normal, como hoy).
+ */
+function triggersSiege(state: GameState, province: Province, movingFactionId: FactionId): boolean {
+  const hostileOwned = province.ownerId !== null && province.ownerId !== movingFactionId;
+  if (!hostileOwned) return false;
+  if (province.settlement.fortLevel < SIEGE_MIN_FORT_LEVEL || province.garrison <= 0) return false;
+  return !hasFieldArmies(state, province.id, movingFactionId);
 }
 
 function chronicleDateText(state: GameState): string {
@@ -119,6 +168,9 @@ export function recruitUnit(
     unitType = getUnitType(typeId);
   } catch {
     return { ok: false, message: `Tipo de unidad desconocido: ${typeId}` };
+  }
+  if (!isUnitUnlocked(state, factionId, typeId)) {
+    return { ok: false, message: `Aún no se ha investigado la tecnología que permite reclutar ${unitType.name}.` };
   }
   const cost = unitType.cost;
 
@@ -230,6 +282,23 @@ export function moveArmy(
     return { ok: true, message: `${army.name} ocupa ${province.name} sin resistencia.` };
   }
 
+  // Fortificación enemiga defendida solo por guarnición (sin ejércitos
+  // hostiles en campo): asedio, no batalla instantánea (Fase 2, GDD §9.2).
+  if (triggersSiege(state, province, army.factionId)) {
+    const alreadyBesieging = (state.sieges ?? []).some(
+      s => s.provinceId === toProvinceId && s.attackerFactionId === army.factionId,
+    );
+    army.provinceId = toProvinceId;
+    startSiege(state, army.id, toProvinceId);
+    return {
+      ok: true,
+      message: alreadyBesieging
+        ? `${army.name} se suma al cerco de ${province.name}.`
+        : `${army.name} pone cerco a ${province.name}.`,
+      battle: null,
+    };
+  }
+
   // Batalla: el ejército entra en la provincia y se resuelve el combate.
   army.provinceId = toProvinceId;
   const battle = resolveBattleAt(state, rng, army.factionId, toProvinceId);
@@ -286,6 +355,10 @@ export function declareWar(
   if (isAtWar(state, attackerId, defenderId)) {
     return { ok: false, message: `Ya hay guerra entre ${attacker.dynastyName} y ${defender.dynastyName}.` };
   }
+  const veto = canDeclareWar(state, attackerId, defenderId);
+  if (!veto.ok) {
+    return { ok: false, message: veto.reason ?? 'La guerra no puede declararse ahora.' };
+  }
   const rel = getRelation(state, attackerId, defenderId);
   if (rel.truceUntilTurn !== undefined && rel.truceUntilTurn > state.turn) {
     return { ok: false, message: 'Hay una tregua vigente: no se puede declarar la guerra todavía.' };
@@ -303,6 +376,9 @@ export function declareWar(
     startedTurn: state.turn,
   };
   state.wars.push(war);
+
+  // aliados defensivos del defensor entran en cascada (Fase 2, GDD §10)
+  joinAlliesToWar(state, war);
 
   rel.opinion = clamp(rel.opinion - 40, -100, 100);
 
@@ -381,6 +457,9 @@ export function wouldTriggerBattle(
   if (!legalMoves(state, armyId).includes(toProvinceId)) return false;
   const province = findProvince(state, toProvinceId);
   if (!province || province.ownerId === army.factionId) return false;
+  // una fortificación defendida solo por guarnición abre un asedio, no una
+  // batalla instantánea (Fase 2, GDD §9.2) — no ofrecer mando táctico ahí.
+  if (triggersSiege(state, province, army.factionId)) return false;
   return hasDefense(state, province, army.factionId);
 }
 

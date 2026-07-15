@@ -179,6 +179,7 @@ export function newGame(seed: number, playerFactionId?: FactionId): GameState {
       foodStock: 120,
       legitimacy: 60,
       alive: true,
+      research: { active: null, points: 0, done: [] },
     };
 
     // ejército inicial en la capital, con general asignado.
@@ -196,6 +197,18 @@ export function newGame(seed: number, playerFactionId?: FactionId): GameState {
       movement: 2,
       movementMax: 2,
     };
+  }
+
+  // Fase 2: fe dominante, edificios y cola de obra por provincia.
+  for (const p of provinces) {
+    const owner = p.ownerId ? factions[p.ownerId] : null;
+    p.religionId = owner
+      ? owner.religionId
+      : p.terrain === 'steppe' ? 'calculo'
+      : p.terrain === 'mountain' || p.terrain === 'hills' ? 'viejos_pactos'
+      : 'aureismo';
+    p.buildings = [];
+    p.buildQueue = null;
   }
 
   // relaciones diplomáticas iniciales entre las 3 facciones jugables.
@@ -227,5 +240,6 @@ export function newGame(seed: number, playerFactionId?: FactionId): GameState {
     rngState: rng.state,
     lastBattle: null,
     outcome: 'ongoing',
+    sieges: [],
   };
 }

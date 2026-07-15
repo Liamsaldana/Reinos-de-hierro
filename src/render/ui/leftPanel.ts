@@ -4,12 +4,18 @@
  */
 import type { GameStore } from '../../core/state/store';
 import type {
-  Army, ArmyId, GameState, Province, ProvinceId, Selection, UnitCategory, UnitCost, UnitType,
-  WorldBridge,
+  Army, ArmyId, BuildingId, BuildQueueItem, GameState, Province, ProvinceId, Selection,
+  UnitCategory, UnitCost, UnitType, WorldBridge,
 } from '../../core/types';
 import { recruitUnit, moveArmy, legalMoves, wouldTriggerBattle } from '../../core/systems/actions';
+import {
+  buildableIn, cancelConstruction, startConstruction, WALL_UPGRADE_ID,
+} from '../../core/systems/construction';
+import { convertCost, convertProvince, religionTension } from '../../core/systems/religion';
 import { launchTacticalBattle } from '../../game/battleFlow';
 import { unitTypesFor, getUnitType } from '../../core/content/units';
+import { getBuilding, type BuildingCost, type BuildingDef } from '../../core/content/buildings';
+import { RELIGIONS } from '../../core/content/cultures';
 import { armyStrength } from '../../core/combat/autoresolve';
 import { el, fmt, clear, replaceChildren, type Child } from './dom';
 import {
@@ -43,6 +49,41 @@ function costLabel(cost: UnitCost): string {
   if (cost.iron) parts.push(`${fmt(cost.iron)} hierro`);
   if (cost.horses) parts.push(`${fmt(cost.horses)} caballos`);
   return parts.join(' · ');
+}
+
+/** chip para un edificio ya construido, con el efecto como tooltip. */
+function buildingChip(id: BuildingId): HTMLElement {
+  try {
+    const def = getBuilding(id);
+    return el('span', { className: 'status-chip', title: def.blurb }, [def.name]);
+  } catch {
+    return el('span', { className: 'status-chip', title: 'Edificio desconocido' }, [id]);
+  }
+}
+
+/** resumen corto de los `effects` de un edificio, para la fila de "construible". */
+function effectSummary(def: BuildingDef): string {
+  const e = def.effects;
+  const parts: string[] = [];
+  if (e.taxFlat) parts.push(`+${fmt(e.taxFlat)} oro`);
+  if (e.foodFlat) parts.push(`+${fmt(e.foodFlat)} alimento`);
+  if (e.manpowerFlat) parts.push(`+${fmt(e.manpowerFlat)} levas`);
+  if (e.researchFlat) parts.push(`+${fmt(e.researchFlat)} investigación`);
+  if (e.legitimacyFlat) parts.push(`+${fmt(e.legitimacyFlat)} legitimidad`);
+  return parts.length > 0 ? parts.join(' · ') : 'Mejora la defensa';
+}
+
+function buildCostLabel(cost: BuildingCost): string {
+  return `${fmt(cost.gold)}⛁ · ${cost.turns} turno${cost.turns === 1 ? '' : 's'}`;
+}
+
+function queueLabel(queue: BuildQueueItem): string {
+  if (queue.buildingId === WALL_UPGRADE_ID) return 'Mejora de fortificación';
+  try {
+    return getBuilding(queue.buildingId).name;
+  } catch {
+    return queue.buildingId;
+  }
 }
 
 export function createLeftPanel(
@@ -88,6 +129,9 @@ export function createLeftPanel(
 
     if (isMine) {
       const faction = state.factions[state.playerFactionId];
+      children.push(...buildingsSection(state, faction.id, province));
+      children.push(...religionSection(state, faction.id, province));
+
       const units = unitTypesFor(faction.cultureId);
       children.push(el('h3', { className: 'panel-subtitle' }, ['Reclutar']));
       if (units.length === 0) {
@@ -98,6 +142,105 @@ export function createLeftPanel(
     }
 
     replaceChildren(panel, children);
+  }
+
+  /** Sección CONSTRUCCIÓN (Fase 2, GDD §9.1): edificios construidos, obra en curso, construibles. */
+  function buildingsSection(state: GameState, factionId: string, province: Province): Child[] {
+    const children: Child[] = [el('h3', { className: 'panel-subtitle' }, ['Construcción'])];
+    const built = province.buildings ?? [];
+
+    if (built.length > 0) {
+      children.push(el('div', { className: 'building-chips' }, built.map(id => buildingChip(id))));
+    }
+
+    if (province.buildQueue) {
+      children.push(queueRow(factionId, province, province.buildQueue));
+    }
+
+    const options = buildableIn(state, province.id);
+    if (options.length > 0) {
+      children.push(el('div', { className: 'recruit-list' }, options.map(def => buildRow(state, factionId, province, def))));
+    } else if (!province.buildQueue) {
+      children.push(el('p', { className: 'notice' }, ['Sin ranuras libres o nada más que construir aquí.']));
+    }
+
+    return children;
+  }
+
+  function queueRow(factionId: string, province: Province, queue: BuildQueueItem): HTMLElement {
+    return el('div', { className: 'recruit-row' }, [
+      el('span', { className: 'recruit-row__name' }, [queueLabel(queue)]),
+      el('span', { className: 'recruit-row__cat' }, [`${queue.turnsLeft} turno${queue.turnsLeft === 1 ? '' : 's'}`]),
+      el('button', {
+        type: 'button',
+        className: 'btn btn--small btn--danger',
+        title: 'Cancela la obra y recupera la mitad del oro pagado',
+        onclick: () => {
+          const result = store.mutate(
+            s => cancelConstruction(s, factionId, province.id),
+            { type: 'economy-changed' },
+          );
+          toast.show(result.message, result.ok ? 'info' : 'warn');
+        },
+      }, ['Cancelar']),
+    ]);
+  }
+
+  function buildRow(state: GameState, factionId: string, province: Province, def: BuildingDef): HTMLElement {
+    const faction = state.factions[factionId];
+    const reasons: string[] = [];
+    if (faction.gold < def.cost.gold) reasons.push(`Oro insuficiente: cuesta ${def.cost.gold}, tienes ${faction.gold}`);
+    const disabled = reasons.length > 0;
+    return el('div', { className: 'recruit-row', title: def.blurb }, [
+      el('span', { className: 'recruit-row__name' }, [def.name]),
+      el('span', { className: 'recruit-row__cat' }, [effectSummary(def)]),
+      el('span', { className: 'recruit-row__cost' }, [buildCostLabel(def.cost)]),
+      el('button', {
+        type: 'button',
+        className: 'btn btn--small',
+        disabled,
+        title: disabled ? reasons.join('; ') : `Construir ${def.name}`,
+        onclick: () => {
+          const result = store.mutate(
+            s => startConstruction(s, factionId, province.id, def.id),
+            { type: 'economy-changed' },
+          );
+          toast.show(result.message, result.ok ? 'info' : 'warn');
+        },
+      }, ['Construir']),
+    ]);
+  }
+
+  /** Sección FE (Fase 2, GDD §2.3): fe dominante de la provincia + conversión si hay tensión. */
+  function religionSection(state: GameState, factionId: string, province: Province): Child[] {
+    const faction = state.factions[factionId];
+    const religionId = province.religionId ?? faction.religionId;
+    const religionName = RELIGIONS[religionId]?.name ?? religionId;
+    const children: Child[] = [
+      el('h3', { className: 'panel-subtitle' }, ['Fe']),
+      el('p', { className: 'resource-line' }, [`Fe: ${religionName}`]),
+    ];
+
+    if (religionTension(state, province.id)) {
+      const cost = convertCost(state, province.id);
+      children.push(el('p', { className: 'notice' }, [
+        'Tensión religiosa: esta provincia no comparte la fe de la corona.',
+      ]));
+      children.push(el('button', {
+        type: 'button',
+        className: 'btn btn--small',
+        title: `Convierte ${province.name} a la fe de la Casa ${faction.dynastyName}`,
+        onclick: () => {
+          const result = store.mutate(
+            s => convertProvince(s, factionId, province.id),
+            { type: 'economy-changed' },
+          );
+          toast.show(result.message, result.ok ? 'info' : 'warn');
+        },
+      }, [`Convertir (−${cost} oro)`]));
+    }
+
+    return children;
   }
 
   function recruitRow(state: GameState, factionId: string, province: Province, unitType: UnitType): HTMLElement {
