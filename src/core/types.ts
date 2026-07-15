@@ -54,6 +54,43 @@ export interface Province {
   baseManpower: number; // levas/turno
   /** milicia defensora local (hombres); pelea sola si no hay ejército */
   garrison: number;
+  /** fe dominante de la provincia (Fase 2; opcional: v1 no lo serializaba) */
+  religionId?: ReligionId;
+  /** edificios construidos (Fase 2, GDD §9.1) */
+  buildings?: BuildingId[];
+  /** obra en curso (una por provincia) */
+  buildQueue?: BuildQueueItem | null;
+}
+
+// ---------- construcción (Fase 2, GDD §9.1) ----------
+export type BuildingId = string;
+
+export interface BuildQueueItem {
+  buildingId: BuildingId;
+  turnsLeft: number;
+}
+
+// ---------- asedios (Fase 2, GDD §9.2) ----------
+export interface Siege {
+  id: string;
+  provinceId: ProvinceId;
+  attackerFactionId: FactionId;
+  /** ids de los ejércitos que mantienen el cerco */
+  besiegerArmyIds: ArmyId[];
+  /** provisiones de la guarnición; 0 → rendición */
+  provisions: number;
+  provisionsMax: number;
+  startedTurn: number;
+}
+
+// ---------- tecnología (Fase 2, GDD §11) ----------
+export type TechId = string;
+
+export interface ResearchState {
+  active: TechId | null;
+  /** puntos acumulados hacia la tecnología activa */
+  points: number;
+  done: TechId[];
 }
 
 // ---------- personajes y dinastía ----------
@@ -126,7 +163,7 @@ export interface Army {
 }
 
 // ---------- diplomacia y guerra ----------
-export type TreatyType = 'alliance' | 'non_aggression';
+export type TreatyType = 'alliance' | 'non_aggression' | 'marriage_tie';
 
 export interface DiploRelation {
   opinion: number; // -100..100
@@ -171,6 +208,8 @@ export interface Faction {
   foodStock: number;
   legitimacy: number;  // 0..100
   alive: boolean;
+  /** investigación (Fase 2; opcional: v1 no lo serializaba) */
+  research?: ResearchState;
 }
 
 // ---------- batalla (auto-resolución, GDD §8.4) ----------
@@ -226,6 +265,8 @@ export interface GameState {
   lastBattle: BattleReport | null;
   /** condición de fin de partida */
   outcome: 'ongoing' | 'victory_conquest' | 'defeat_extinction' | 'defeat_conquered';
+  /** asedios activos (Fase 2; opcional: v1 no lo serializaba) */
+  sieges?: Siege[];
 }
 
 // ---------- helpers derivados (puros) ----------

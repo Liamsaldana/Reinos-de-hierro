@@ -1,6 +1,6 @@
 # Reporte de simulación — Reinos de Hierro
 
-Generado automáticamente por `tests/simulation.test.ts` (AGENTE I / AGENTE N, harness de simulación) — 2026-07-14.
+Generado automáticamente por `tests/simulation.test.ts` (AGENTE I / AGENTE N, harness de simulación) — 2026-07-15.
 
 ## Diagnóstico (AGENTE N — "la IA debe morder")
 
@@ -17,9 +17,9 @@ Arreglo: `garrisonDefensePower()` reconstruye la potencia de guarnición EN LAS 
 
 | Semilla | Guerras declaradas | Batallas | Provincias que cambiaron de dueño | Conquistas (a un rival) | Facciones vivas @turno15 | Facciones vivas @final | Oro medio | Duración (ms) |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 11 | 4 | 22 | 24 | 13 | 3 | 3 | 427 | 99 |
-| 23 | 4 | 28 | 29 | 15 | 3 | 3 | 677 | 56 |
-| 47 | 4 | 26 | 33 | 19 | 3 | 3 | 393 | 65 |
+| 11 | 4 | 22 | 24 | 13 | 3 | 3 | 427 | 87 |
+| 23 | 4 | 28 | 29 | 15 | 3 | 3 | 677 | 50 |
+| 47 | 4 | 26 | 33 | 19 | 3 | 3 | 393 | 49 |
 
 Actividad de IA acumulada en las 3 semillas: 12 guerra(s) declarada(s), 76 batalla(s), 86 cambio(s) de dueño de provincia (de ellos, 47 conquistados a un rival vivo, no tierra sin señor).
 
