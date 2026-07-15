@@ -4,12 +4,27 @@
  * (opinión + declarar guerra).
  */
 import type { GameStore } from '../../core/state/store';
-import type { CasusBelli, FactionId, GameState, Province, War } from '../../core/types';
+import type {
+  CasusBelli, FactionId, GameState, Province, TreatyType, War,
+} from '../../core/types';
 import { relKey } from '../../core/types';
+import type { Rng } from '../../core/state/rng';
+import type { ActionResult } from '../../core/systems/actions';
 import { declareWar, negotiatePeace } from '../../core/systems/actions';
+import {
+  allianceRequirement, breakTreaty, formAlliance, marriageRequirement,
+  nonAggressionRequirement, proposeMarriage, signNonAggression,
+} from '../../core/systems/diplomacy';
 import { el, fmt, fmtSigned, clear, replaceChildren, type Child } from './dom';
 import { CASUS_BELLI_ES } from './format';
 import type { ToastStack } from './toast';
+
+/** Iconos/etiquetas de tratado para la caja diplomática (GDD §10 v1+, AGENTE R). */
+const TREATY_CHIP: Record<TreatyType, { icon: string; label: string }> = {
+  marriage_tie: { icon: '💍', label: 'Lazo de sangre' },
+  alliance: { icon: '🤝', label: 'Alianza' },
+  non_aggression: { icon: '🕊', label: 'Pacto de no agresión' },
+};
 
 export interface WarsPanel {
   refresh(): void;
@@ -95,11 +110,61 @@ export function createWarsPanel(container: HTMLElement, store: GameStore, toast:
       }, [`Declarar guerra (${CASUS_BELLI_ES[cb]})`]);
     }
 
+    /** Botón de propuesta diplomática: deshabilitado con motivo si no cumple los requisitos duros. */
+    function proposalBtn(
+      label: string, reason: string | null, run: (s: GameState, rng: Rng) => ActionResult,
+    ): HTMLElement {
+      return el('button', {
+        type: 'button',
+        className: 'btn btn--small',
+        disabled: !!reason,
+        title: reason ?? `${label}.`,
+        onclick: () => {
+          const rng = store.rng();
+          const result = store.mutate(s => run(s, rng), { type: 'map-changed' });
+          toast.show(result.message, result.ok ? 'info' : 'warn');
+        },
+      }, [label]);
+    }
+
+    function breakBtn(treaty: TreatyType): HTMLElement {
+      const info = TREATY_CHIP[treaty];
+      return el('button', {
+        type: 'button',
+        className: 'btn btn--small btn--danger',
+        title: `Romper: ${info.label}`,
+        onclick: () => {
+          if (!window.confirm(`¿Romper "${info.label}" con ${otherLabel}? Dañará la opinión y tu legitimidad.`)) return;
+          const result = store.mutate(s => breakTreaty(s, playerId, otherId, treaty), { type: 'map-changed' });
+          toast.show(result.message, result.ok ? 'info' : 'warn');
+        },
+      }, ['Romper tratado']);
+    }
+
+    const treaties = relation?.treaties ?? [];
+
     const children: Child[] = [
       el('h3', { className: 'panel-subtitle' }, ['Diplomacia']),
       el('p', { className: 'diplo-target' }, [otherLabel]),
       el('p', { className: 'diplo-opinion' }, [`Opinión: ${fmtSigned(opinion)}`]),
     ];
+
+    if (treaties.length > 0) {
+      children.push(el('div', { className: 'treaty-chips' }, treaties.map((t) => el('div', { className: 'treaty-chip' }, [
+        el('span', { className: 'treaty-chip__label', title: TREATY_CHIP[t].label }, [`${TREATY_CHIP[t].icon} ${TREATY_CHIP[t].label}`]),
+        breakBtn(t),
+      ]))));
+    }
+
+    children.push(el('div', { className: 'diplo-actions' }, [
+      proposalBtn('Proponer matrimonio', marriageRequirement(state, playerId, otherId),
+        (s, rng) => proposeMarriage(s, rng, playerId, otherId)),
+      proposalBtn('Proponer alianza', allianceRequirement(state, playerId, otherId),
+        (s, rng) => formAlliance(s, rng, playerId, otherId)),
+      proposalBtn('Pacto de no agresión', nonAggressionRequirement(state, playerId, otherId),
+        (s, rng) => signNonAggression(s, rng, playerId, otherId)),
+    ]));
+
     if (atWar) {
       children.push(el('p', { className: 'notice' }, ['Ya estáis en guerra.']));
     } else if (truce) {

@@ -8,9 +8,13 @@ import { seasonOf, yearOf } from '../types';
 import type { Rng } from '../state/rng';
 import { runFactionAI } from '../ai/factionAI';
 import { getUnitType } from '../content/units';
+import { tickSieges } from './siege';
+import { tickConstruction } from './construction';
+import { tickResearch } from './research';
+import { marriageHeirFaction, transferRealm } from './diplomacy';
 import {
-  armiesOf, clamp, foodConsumption, foodProduction, manpowerCap, manpowerGain, provincesOf,
-  taxIncome, upkeepCost,
+  armiesOf, clamp, foodConsumption, foodProduction, legitimacyTick, manpowerCap, manpowerGain,
+  provincesOf, taxIncome, upkeepCost,
 } from './economy';
 
 export interface TurnSummary {
@@ -56,6 +60,10 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
 
   // 1. Snapshot ya tomado arriba (chronicleStart).
 
+  // 1.5 Asedios activos (Fase 2): provisiones, atrición, rendiciones — ANTES
+  // de la IA para que un cerco recién puesto no pierda provisiones este turno.
+  playerMessages.push(...tickSieges(state, rng));
+
   // 2. IA: cada facción viva no jugadora ejecuta su turno.
   const battleBeforeAI = state.lastBattle;
   for (const factionId of livingFactionIds(state)) {
@@ -69,9 +77,13 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
     }
   }
 
+  // 2.5 Obras (Fase 2): la construcción que termina cuenta ya en el ingreso.
+  playerMessages.push(...tickConstruction(state));
+
   // 3. Economía: ingresos - mantenimiento.
   for (const factionId of livingFactionIds(state)) {
     const faction = state.factions[factionId];
+    faction.legitimacy = clamp(faction.legitimacy + legitimacyTick(state, factionId), 0, 100);
     const income = taxIncome(state, factionId, currentSeason);
     const upkeep = upkeepCost(state, factionId);
     const net = Math.floor(income - upkeep);
@@ -135,6 +147,9 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
     if (army.units.length === 0) delete state.armies[armyId];
   }
 
+  // 5.5 Investigación (Fase 2): puntos y tecnologías completadas.
+  playerMessages.push(...tickResearch(state));
+
   // 6. Invierno (ANTES de turn++): envejecimiento, muerte natural, sucesión.
   if (currentSeason === 3) {
     for (const charId of Object.keys(state.characters)) {
@@ -173,6 +188,11 @@ export function endTurn(state: GameState, rng: Rng): TurnSummary {
               });
             } else if (faction.id === playerId) {
               state.outcome = 'defeat_extinction';
+            } else if (marriageHeirFaction(state, faction.id)) {
+              // Fase 2 (GDD §10): la casa ligada por matrimonio hereda el reino.
+              const heirFactionId = marriageHeirFaction(state, faction.id)!;
+              playerMessages.push(...transferRealm(state, faction.id, heirFactionId));
+              faction.alive = false;
             } else {
               const attrs: Attributes = {
                 martial: rng.int(3, 7),

@@ -79,10 +79,14 @@
 import type {
   Army, Faction, FactionId, GameState, Province, ProvinceId, UnitType,
 } from '../types';
+import { relKey } from '../types';
 import type { Rng } from '../state/rng';
 import {
   declareWar, legalMoves, moveArmy, negotiatePeace, recruitUnit,
 } from '../systems/actions';
+import {
+  breakTreaty, canDeclareWar, formAlliance, proposeMarriage, signNonAggression,
+} from '../systems/diplomacy';
 import { getUnitType, unitTypesFor } from '../content/units';
 import { armyStrength } from '../combat/autoresolve';
 
@@ -119,6 +123,25 @@ function isAtWar(state: GameState, a: FactionId, b: FactionId): boolean {
 
 function provinceById(state: GameState, id: ProvinceId): Province | undefined {
   return state.provinces.find((p) => p.id === id);
+}
+
+/**
+ * Facciones vivas dueñas de alguna provincia adyacente a las nuestras
+ * ("vecino fronterizo", GDD §17.1-2). Compartida por la declaración de
+ * guerra (paso 4) y la nueva fase diplomática (paso 3.5, AGENTE R): ambas
+ * necesitan exactamente el mismo concepto de "con quién lindamos".
+ */
+function borderingFactionIds(state: GameState, factionId: FactionId): FactionId[] {
+  const myProvinceIds = new Set(ownedProvinces(state, factionId).map((p) => p.id));
+  const result = new Set<FactionId>();
+  for (const p of state.provinces) {
+    if (!myProvinceIds.has(p.id)) continue;
+    for (const nId of p.neighbors) {
+      const np = provinceById(state, nId);
+      if (np && np.ownerId && np.ownerId !== factionId) result.add(np.ownerId);
+    }
+  }
+  return Array.from(result).filter((id) => state.factions[id]?.alive);
 }
 
 /** Umbral de ataque por arquetipo (GDD §17.1-2): decenas de armyStrength contra decenas. */
@@ -425,24 +448,94 @@ export function runFactionAI(state: GameState, rng: Rng, factionId: FactionId): 
     }
   }
 
-  // 4) DECLARAR GUERRA (máximo 1 por turno, solo si no está ya en guerra)
-  if (!atWar) {
-    const myProvinceIds = new Set(ownedProvinces(state, factionId).map((p) => p.id));
-    const neighborFactionIds = new Set<FactionId>();
-    for (const p of state.provinces) {
-      if (!myProvinceIds.has(p.id)) continue;
-      for (const nId of p.neighbors) {
-        const np = provinceById(state, nId);
-        if (np && np.ownerId && np.ownerId !== factionId) neighborFactionIds.add(np.ownerId);
+  // 3.5) DIPLOMACIA (GDD §10 v1+, AGENTE R) — antes de declarar guerra.
+  // Cap de 1 acción diplomática por turno: se prueban en orden de prioridad
+  // (predación > supervivencia > matrimonio > alianza) y se corta en el
+  // primer intento, se acepte o no — proponer YA gasta el turno diplomático.
+  {
+    const neighborIds = borderingFactionIds(state, factionId);
+    const myStrengthTotal = factionTotalStrength(state, factionId);
+    let diploActed = false;
+
+    // (a) tribal: rompe el primer pacto con una presa que ya no pueda
+    // responder (<0.5x de nuestra fuerza) — asume el coste (opinión/legitimidad)
+    // para poder, si procede, declararle la guerra este mismo turno (paso 4).
+    if (!diploActed && faction.ai === 'tribal') {
+      const prey = neighborIds.find((id) => {
+        const rel = state.relations[relKey(factionId, id)];
+        if (!rel || rel.treaties.length === 0) return false;
+        return factionTotalStrength(state, id) < 0.5 * myStrengthTotal;
+      });
+      if (prey) {
+        const treaty = state.relations[relKey(factionId, prey)].treaties[0];
+        diploActed = true;
+        const res = breakTreaty(state, factionId, prey, treaty);
+        if (res.ok) {
+          log.push(`${faction.name} rompe su palabra con ${state.factions[prey]?.name ?? prey}: la presa ya no puede responder.`);
+        }
       }
     }
-    if (neighborFactionIds.size > 0) {
+
+    // (b) todos: si vamos muy por debajo del vecino fronterizo más fuerte,
+    // buscamos cubrirnos con un pacto de no agresión (defensivo, no una tirada).
+    if (!diploActed && neighborIds.length > 0) {
+      let strongest: { id: FactionId; strength: number } | null = null;
+      for (const id of neighborIds) {
+        const s = factionTotalStrength(state, id);
+        if (!strongest || s > strongest.strength) strongest = { id, strength: s };
+      }
+      if (strongest && myStrengthTotal < 0.7 * strongest.strength) {
+        diploActed = true;
+        const res = signNonAggression(state, rng, factionId, strongest.id);
+        if (res.ok) {
+          log.push(`${faction.name}, temiendo a ${state.factions[strongest.id]?.name ?? strongest.id}, sella un pacto de no agresión.`);
+        }
+      }
+    }
+
+    // (c) todos: vecino con buena opinión y sin lazo → 20% de proponer matrimonio.
+    if (!diploActed) {
+      const candidate = neighborIds.find((id) => {
+        const rel = state.relations[relKey(factionId, id)];
+        return (rel?.opinion ?? 0) >= 10 && !rel?.treaties.includes('marriage_tie');
+      });
+      if (candidate && rng.chance(0.2)) {
+        diploActed = true;
+        const res = proposeMarriage(state, rng, factionId, candidate);
+        if (res.ok) {
+          log.push(`${faction.name} sella un matrimonio real con la Casa ${state.factions[candidate]?.dynastyName ?? candidate}.`);
+        }
+      }
+    }
+
+    // (d) consolidated: busca activamente alianzas con vecinos de opinión alta → 30%.
+    if (!diploActed && faction.ai === 'consolidated') {
+      const candidate = neighborIds.find((id) => {
+        const rel = state.relations[relKey(factionId, id)];
+        return (rel?.opinion ?? 0) >= 25 && !rel?.treaties.includes('alliance');
+      });
+      if (candidate && rng.chance(0.3)) {
+        diploActed = true;
+        const res = formAlliance(state, rng, factionId, candidate);
+        if (res.ok) {
+          log.push(`${faction.name} propone una alianza a ${state.factions[candidate]?.name ?? candidate}.`);
+        }
+      }
+    }
+
+    void diploActed;
+  }
+
+  // 4) DECLARAR GUERRA (máximo 1 por turno, solo si no está ya en guerra)
+  if (!atWar) {
+    const neighborFactionIds = borderingFactionIds(state, factionId);
+    if (neighborFactionIds.length > 0) {
       let weakest: { id: FactionId; strength: number } | null = null;
       for (const id of neighborFactionIds) {
         const s = factionTotalStrength(state, id);
         if (!weakest || s < weakest.strength) weakest = { id, strength: s };
       }
-      if (weakest) {
+      if (weakest && canDeclareWar(state, factionId, weakest.id).ok) {
         const myStrengthTotal = factionTotalStrength(state, factionId);
         const neighborFaction = state.factions[weakest.id];
         let declared = false;

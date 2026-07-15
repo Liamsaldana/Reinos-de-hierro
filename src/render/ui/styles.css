@@ -659,6 +659,15 @@
   gap: 0.5em;
 }
 
+/* ---------- construcción (Fase 2, GDD §9.1): reusa .status-chip / .recruit-row, cero HEX nuevos ---------- */
+
+.building-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
 .recruit-row, .unit-row {
   display: grid;
   grid-template-columns: 1.4fr 1fr auto auto;
@@ -780,6 +789,29 @@
   display: flex;
   gap: 0.5em;
   flex-wrap: wrap;
+}
+
+.treaty-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  margin: 0.6em 0;
+}
+
+.treaty-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding: 0.3em 0.6em;
+  background: var(--ink-2);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  font-size: 0.85em;
+}
+
+.treaty-chip__label {
+  opacity: 0.9;
 }
 
 /* ---------- crónica ---------- */
