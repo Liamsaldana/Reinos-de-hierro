@@ -557,3 +557,223 @@ export function transferRealm(state: GameState, fromId: FactionId, toId: Faction
 
   return messages;
 }
+
+// ============================================================================
+// AGENTE U — vasallaje y sobornos (Fase 3, GDD §10 "poder blando")
+// ============================================================================
+
+// ---------- vasallaje ----------
+
+/** Fuerza militar total de la facción (duplicado a propósito, ver docstring del archivo). */
+function factionTotalStrength(state: GameState, factionId: FactionId): number {
+  return Object.values(state.armies)
+    .filter((a) => a.factionId === factionId)
+    .reduce((sum, a) => sum + armyStrength(state, a), 0);
+}
+
+/** warScore de la guerra entre `factionId` y `otherId`, visto desde `factionId`; null si no están en guerra. */
+function warScoreFor(state: GameState, factionId: FactionId, otherId: FactionId): number | null {
+  const war = state.wars.find(
+    (w) => (w.attackerId === factionId && w.defenderId === otherId)
+      || (w.attackerId === otherId && w.defenderId === factionId),
+  );
+  if (!war) return null;
+  return war.attackerId === factionId ? war.warScore : -war.warScore;
+}
+
+/** Facciones vivas vasallas de `factionId` (single-hop: no vasallos de vasallos, GDD v1). */
+export function vassalsOf(state: GameState, factionId: FactionId): FactionId[] {
+  const result: FactionId[] = [];
+  for (const otherId of Object.keys(state.factions)) {
+    if (otherId === factionId) continue;
+    const other = state.factions[otherId];
+    if (!other || !other.alive) continue;
+    if (other.vassalOfId === factionId) result.push(otherId);
+  }
+  return result;
+}
+
+/**
+ * Precondición dura para exigir vasallaje — consulta PURA. A propósito NO
+ * exige paz (a diferencia de matrimonio/alianza/no-agresión): el caso de uso
+ * típico es justo lo contrario, exigir la rodilla a quien ya va perdiendo
+ * una guerra.
+ */
+export function vassalageRequirement(state: GameState, lordId: FactionId, vassalId: FactionId): string | null {
+  const lord = state.factions[lordId];
+  const vassal = state.factions[vassalId];
+  if (!lord || !vassal) return 'Facción desconocida.';
+  if (lordId === vassalId) return 'Una facción no puede exigirse vasallaje a sí misma.';
+  if (vassal.vassalOfId) {
+    return vassal.vassalOfId === lordId
+      ? 'Esa casa ya es vasalla vuestra.'
+      : 'Esa casa ya es vasalla de otro señor.';
+  }
+  if (lord.vassalOfId) return 'Una casa vasalla no puede exigir vasallaje a otras.';
+  return null;
+}
+
+/**
+ * Exige vasallaje a `vassalId`. La casa objetivo ACEPTA solo si va perdiendo
+ * fuerte: su fuerza militar total es menor que 0.45x la del señor, Y además
+ * (está en guerra con él con warScore < -30 desde su propia perspectiva, O
+ * le quedan 2 provincias o menos). Sin tirada propia (el umbral ya arbitra,
+ * igual que `formAlliance`/`signNonAggression`); `rng` se mantiene en la
+ * firma por consistencia con el resto de propuestas diplomáticas.
+ * Aceptado: treaty 'vassalage', `vassal.vassalOfId = lordId`, termina la
+ * guerra entre ambos si la había, opinión +20, crónica ("hincó la rodilla").
+ * Rechazado: sin penalización (como `formAlliance`/`signNonAggression` —
+ * proponer no insulta, a diferencia de `proposeMarriage`).
+ */
+export function proposeVassalage(
+  state: GameState, rng: Rng, lordId: FactionId, vassalId: FactionId,
+): ActionResult {
+  void rng;
+  const reason = vassalageRequirement(state, lordId, vassalId);
+  if (reason) return { ok: false, message: reason };
+
+  const lord = state.factions[lordId];
+  const vassal = state.factions[vassalId];
+
+  const lordStrength = factionTotalStrength(state, lordId);
+  const vassalStrength = factionTotalStrength(state, vassalId);
+  const overwhelmed = vassalStrength < 0.45 * lordStrength;
+  const myWarScore = warScoreFor(state, vassalId, lordId);
+  const losingWar = myWarScore !== null && myWarScore < -30;
+  const fewProvinces = provincesOf(state, vassalId).length <= 2;
+
+  if (!(overwhelmed && (losingWar || fewProvinces))) {
+    return {
+      ok: false,
+      message: `La Casa ${vassal.dynastyName} rechaza hincar la rodilla ante la Casa ${lord.dynastyName}: aún puede resistir.`,
+    };
+  }
+
+  const activeWar = state.wars.find(
+    (w) => (w.attackerId === lordId && w.defenderId === vassalId)
+      || (w.attackerId === vassalId && w.defenderId === lordId),
+  );
+  if (activeWar) {
+    state.wars = state.wars.filter((w) => w.id !== activeWar.id);
+  }
+
+  const rel = getRelation(state, lordId, vassalId);
+  rel.treaties.push('vassalage');
+  rel.opinion = clamp(rel.opinion + 20, -100, 100);
+  vassal.vassalOfId = lordId;
+
+  state.chronicle.push({
+    turn: state.turn,
+    kind: 'guerra',
+    text: `En ${chronicleDateText(state)}, la Casa ${vassal.dynastyName} hincó la rodilla ante la Casa `
+      + `${lord.dynastyName} y juró vasallaje.`,
+  });
+
+  return {
+    ok: true,
+    message: `La Casa ${vassal.dynastyName} acepta el vasallaje bajo la Casa ${lord.dynastyName}.`,
+  };
+}
+
+// ---------- soborno ----------
+
+const BRIBE_OPINION_COST = 50;
+const BRIBE_OPINION_GAIN = 15;
+const BRIBE_BREAK_ALLIANCE_COST = 120;
+
+/** Precondición dura para el soborno simple — consulta PURA (solo hace falta el oro). */
+export function bribeOpinionRequirement(state: GameState, aId: FactionId, bId: FactionId): string | null {
+  const a = state.factions[aId];
+  const b = state.factions[bId];
+  if (!a || !b) return 'Facción desconocida.';
+  if (aId === bId) return 'Una facción no puede sobornarse a sí misma.';
+  if (a.gold < BRIBE_OPINION_COST) {
+    return `Hace falta oro para el soborno (cuesta ${BRIBE_OPINION_COST}, tenéis ${a.gold}).`;
+  }
+  return null;
+}
+
+/**
+ * Soborno simple: `aId` paga a la corte de `bId` por buena voluntad. Sin
+ * tirada ni rechazo — el oro habla siempre que alcance para pagarlo (a
+ * diferencia de `bribeBreakAlliance`, aquí no hay umbral de opinión que lo
+ * bloquee). LÍMITE v1 documentado a propósito: la especificación pide "cap 1
+ * uso por par por turno", pero imponerlo de verdad exige una marca de turno
+ * nueva en `DiploRelation` (o un contador), y `types.ts` NO es de este
+ * agente en esta fase — queda como deuda técnica explícita, no como bug
+ * escondido: por ahora nada impide sobornar más de una vez el mismo turno
+ * salvo el propio oro disponible. Candidato para cuando `types.ts` esté
+ * disponible: `DiploRelation.bribedUntilTurn`. Sin crónica a propósito: es
+ * un soborno, no un acto público (a diferencia de tratados/matrimonios).
+ */
+export function bribeOpinion(
+  state: GameState, rng: Rng, aId: FactionId, bId: FactionId,
+): ActionResult {
+  void rng;
+  const reason = bribeOpinionRequirement(state, aId, bId);
+  if (reason) return { ok: false, message: reason };
+
+  const a = state.factions[aId];
+  const b = state.factions[bId];
+  a.gold -= BRIBE_OPINION_COST;
+  const rel = getRelation(state, aId, bId);
+  rel.opinion = clamp(rel.opinion + BRIBE_OPINION_GAIN, -100, 100);
+
+  return {
+    ok: true,
+    message: `La Casa ${a.dynastyName} soborna a la corte de la Casa ${b.dynastyName} `
+      + `(+${BRIBE_OPINION_GAIN} opinión, -${BRIBE_OPINION_COST} de oro).`,
+  };
+}
+
+/**
+ * Soborno de ruptura: `briberId` paga para que `targetId` rompa SU alianza
+ * con `thirdId`. La casa `targetId` acepta solo si su propia opinión hacia
+ * `thirdId` es < 20 (una alianza que ya valora poco es más fácil de
+ * comprar) — sin tirada, umbral puro. Aceptado: cobra el oro a `briberId` y
+ * ejecuta `breakTreaty` sobre `targetId`↔`thirdId` (mismo coste de
+ * opinión/legitimidad que romper cualquier tratado: el soborno no exime a
+ * `targetId` de la mancha de romper su palabra, solo la provoca; la crónica
+ * de la ruptura ya la escribe `breakTreaty`, no se duplica aquí). Rechazado:
+ * sin coste para nadie — el oro nunca cambia de manos si `targetId` no
+ * muerde.
+ */
+export function bribeBreakAlliance(
+  state: GameState, rng: Rng, briberId: FactionId, targetId: FactionId, thirdId: FactionId,
+): ActionResult {
+  void rng;
+  const briber = state.factions[briberId];
+  const target = state.factions[targetId];
+  const third = state.factions[thirdId];
+  if (!briber || !target || !third) return { ok: false, message: 'Facción desconocida.' };
+  if (briberId === targetId || briberId === thirdId || targetId === thirdId) {
+    return { ok: false, message: 'Hacen falta tres casas distintas para este soborno.' };
+  }
+  const rel = state.relations[relKey(targetId, thirdId)];
+  if (!rel?.treaties.includes('alliance')) {
+    return {
+      ok: false,
+      message: `No hay alianza entre la Casa ${target.dynastyName} y la Casa ${third.dynastyName} que romper.`,
+    };
+  }
+  if (briber.gold < BRIBE_BREAK_ALLIANCE_COST) {
+    return {
+      ok: false,
+      message: `Hace falta oro para el soborno (cuesta ${BRIBE_BREAK_ALLIANCE_COST}, tenéis ${briber.gold}).`,
+    };
+  }
+  if (rel.opinion >= 20) {
+    return {
+      ok: false,
+      message: `La Casa ${target.dynastyName} rechaza el soborno: su alianza con la Casa ${third.dynastyName} vale más que el oro.`,
+    };
+  }
+
+  briber.gold -= BRIBE_BREAK_ALLIANCE_COST;
+  const broken = breakTreaty(state, targetId, thirdId, 'alliance');
+
+  return {
+    ok: true,
+    message: `El oro de la Casa ${briber.dynastyName} corrompe a la Casa ${target.dynastyName}: ${broken.message}`,
+  };
+}

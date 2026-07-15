@@ -13,11 +13,29 @@
  * AGENTE Q: banco propio. El integrador cablea unlockUnits en recruitUnit
  * (vía research.ts:isUnitUnlocked) y el resto de efectos en economy.ts
  * (vía research.ts:getTechModifiers).
+ *
+ * ---------------------------------------------------------------------------
+ * AGENTE W (Fase 3, GDD §11.1 "el árbol progresa por eras... avanzar de era
+ * desbloquea las siguientes ramas", sin pólvora jamás — GDD §17.2 RESUELTA):
+ * añade la ERA 3 (~8 tecnologías, ver banner "ERA 3" más abajo), aditiva —
+ * ninguna tecnología v1 se toca. `TechEra` se amplía aquí mismo (vive en este
+ * archivo, no en types.ts) a `1 | 2 | 3`; `research.ts` no necesita ningún
+ * cambio, porque nunca mira el campo `era` — todo el gating sale de
+ * `requires` (ver el comentario de arriba), así que la regla "era 3 exige
+ * era 2 completa de su rama" se expresa igual: cada tecnología de era 3
+ * requiere, EXPLÍCITAMENTE, TODAS las tecnologías de era 2 ya existentes en
+ * su rama (2 en militar, 3 en economía, 3 en estado — no hay una rama con 4
+ * tecnologías de era 2, así que "todas" es el techo real, más estricto que
+ * cualquier cifra fija posible). Costes 130-180 (banda propia de era 3, por
+ * encima de la de era 2 ~70-110). `talla_de_vidrio_igneo` no tiene efecto
+ * mecánico propio a propósito: la capa mítica (Fase 3, GDD §2.5) la consulta
+ * por su id EXACTO cuando aterrice.
+ * ---------------------------------------------------------------------------
  */
 import type { TechId, UnitTypeId } from '../types';
 
 export type TechBranch = 'militar' | 'economia' | 'estado';
-export type TechEra = 1 | 2;
+export type TechEra = 1 | 2 | 3;
 
 export interface TechEffects {
   /** unidades de tier 2 que esta tecnología desbloquea para reclutar */

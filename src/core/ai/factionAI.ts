@@ -85,8 +85,11 @@ import {
   declareWar, legalMoves, moveArmy, negotiatePeace, recruitUnit,
 } from '../systems/actions';
 import {
-  breakTreaty, canDeclareWar, formAlliance, proposeMarriage, signNonAggression,
+  breakTreaty, canDeclareWar, formAlliance, proposeMarriage, proposeVassalage,
+  signNonAggression, vassalageRequirement,
 } from '../systems/diplomacy';
+import { proposeTradeTreaty } from '../systems/trade';
+import { sabotageGarrison } from '../systems/espionage';
 import { getUnitType, unitTypesFor } from '../content/units';
 import { armyStrength } from '../combat/autoresolve';
 
