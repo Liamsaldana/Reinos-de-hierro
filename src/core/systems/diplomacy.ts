@@ -107,6 +107,8 @@ const TREATY_BREAK_FLAVOR: Record<TreatyType, string> = {
   alliance: 'su alianza',
   non_aggression: 'su pacto de no agresión',
   marriage_tie: 'su lazo de sangre',
+  trade: 'su tratado comercial',
+  vassalage: 'su juramento de vasallaje',
 };
 
 // ---------- matrimonio ----------

@@ -91,6 +91,8 @@ const HEIR_NAMES: Record<CultureId, readonly string[]> = {
   aurelios: ['Lucio', 'Flavia', 'Sabina', 'Tiberio', 'Marcela', 'Cayo', 'Druso', 'Lucrecia'],
   norlander: ['Eirik', 'Sigrid', 'Torvald', 'Hilda', 'Bjarne', 'Runa', 'Ase', 'Kolbein'],
   estepara: ['Bataar', 'Sarnai', 'Nomin', 'Enkhtuya', 'Odval', 'Tuya', 'Mönkh', 'Solongo'],
+  sarradio: ['Zahir', 'Layla', 'Nadim', 'Soraya', 'Rashid', 'Amira', 'Farid', 'Yasmin'],
+  highland: ['Ewan', 'Moira', 'Duncan', 'Ailsa', 'Bran', 'Iona', 'Alasdair', 'Sine'],
 };
 function guessSurname(fullName: string): string | null {
   const parts = fullName.trim().split(/\s+/);

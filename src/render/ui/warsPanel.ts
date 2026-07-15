@@ -24,6 +24,8 @@ const TREATY_CHIP: Record<TreatyType, { icon: string; label: string }> = {
   marriage_tie: { icon: '💍', label: 'Lazo de sangre' },
   alliance: { icon: '🤝', label: 'Alianza' },
   non_aggression: { icon: '🕊', label: 'Pacto de no agresión' },
+  trade: { icon: '⚖', label: 'Tratado comercial' },
+  vassalage: { icon: '⛓', label: 'Vasallaje' },
 };
 
 export interface WarsPanel {
