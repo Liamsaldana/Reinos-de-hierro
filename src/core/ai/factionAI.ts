@@ -147,6 +147,24 @@ function borderingFactionIds(state: GameState, factionId: FactionId): FactionId[
   return Array.from(result).filter((id) => state.factions[id]?.alive);
 }
 
+/**
+ * Primera provincia de `targetFactionId` que linda con una provincia propia
+ * (orden determinista: el de `state.provinces`) — para elegir el objetivo
+ * de `sabotageGarrison` (Fase 3, GDD §10, AGENTE U), que opera sobre una
+ * provincia concreta, no sobre una facción. null si no lindan en absoluto.
+ */
+function firstBorderProvinceOf(state: GameState, factionId: FactionId, targetFactionId: FactionId): ProvinceId | null {
+  const myProvinceIds = new Set(ownedProvinces(state, factionId).map((p) => p.id));
+  for (const p of state.provinces) {
+    if (!myProvinceIds.has(p.id)) continue;
+    for (const nId of p.neighbors) {
+      const np = provinceById(state, nId);
+      if (np && np.ownerId === targetFactionId) return np.id;
+    }
+  }
+  return null;
+}
+
 /** Umbral de ataque por arquetipo (GDD §17.1-2): decenas de armyStrength contra decenas. */
 function attackThreshold(archetype: Faction['ai']): number {
   switch (archetype) {
@@ -522,6 +540,65 @@ export function runFactionAI(state: GameState, rng: Rng, factionId: FactionId): 
         const res = formAlliance(state, rng, factionId, candidate);
         if (res.ok) {
           log.push(`${faction.name} propone una alianza a ${state.factions[candidate]?.name ?? candidate}.`);
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // AGENTE U (Fase 3, GDD §10 "poder blando") — comercio, vasallaje y
+    // sabotaje. Añadidas AL FINAL de la cadena de prioridad (después de
+    // predación/supervivencia/matrimonio/alianza, sin reordenar ninguna): la
+    // simulación sin jugador (tests/simulation.test.ts) ya exige guerras y
+    // conquistas reales, así que estas ramas nuevas nunca deben "ganarle" el
+    // turno diplomático a un pacto de supervivencia — solo rellenan cuando
+    // ninguna de las (a)-(d) tuvo motivo para disparar.
+    // ---------------------------------------------------------------------
+
+    // (e) consolidated o cultura mercantil sarradio (GDD §2.2 "Comercio y
+    // ciencia"): con un vecino de opinión no hostil, propone tratado
+    // comercial → 30%.
+    if (!diploActed && (faction.ai === 'consolidated' || faction.cultureId === 'sarradio')) {
+      const candidate = neighborIds.find((id) => {
+        const rel = state.relations[relKey(factionId, id)];
+        return (rel?.opinion ?? 0) >= 0 && !rel?.treaties.includes('trade') && !isAtWar(state, factionId, id);
+      });
+      if (candidate && rng.chance(0.3)) {
+        diploActed = true;
+        const res = proposeTradeTreaty(state, rng, factionId, candidate);
+        if (res.ok) {
+          log.push(`${faction.name} sella un tratado comercial con ${state.factions[candidate]?.name ?? candidate}.`);
+        }
+      }
+    }
+
+    // (f) todos: un señor fuerte exige vasallaje a un vecino ya muy
+    // debilitado (fuerza < 0.45x la propia; `proposeVassalage` decide la
+    // aceptación real con el resto de condiciones — este pre-filtro solo
+    // evita gastar el turno en un vecino que de entrada ni de lejos cumple)
+    // → 20%.
+    if (!diploActed && neighborIds.length > 0) {
+      const candidate = neighborIds.find((id) => vassalageRequirement(state, factionId, id) === null
+        && factionTotalStrength(state, id) < 0.45 * myStrengthTotal);
+      if (candidate && rng.chance(0.2)) {
+        diploActed = true;
+        const res = proposeVassalage(state, rng, factionId, candidate);
+        if (res.ok) {
+          log.push(`${faction.name} exige vasallaje a ${state.factions[candidate]?.name ?? candidate}, que hinca la rodilla.`);
+        }
+      }
+    }
+
+    // (g) tribal: con tesoro de sobra (>200 de oro), sabotea la guarnición
+    // de un vecino fronterizo → 15%.
+    if (!diploActed && faction.ai === 'tribal' && faction.gold > 200 && neighborIds.length > 0) {
+      const targetFactionId = neighborIds.find((id) => firstBorderProvinceOf(state, factionId, id) !== null);
+      if (targetFactionId && rng.chance(0.15)) {
+        diploActed = true;
+        const provinceId = firstBorderProvinceOf(state, factionId, targetFactionId) as ProvinceId;
+        const res = sabotageGarrison(state, rng, factionId, provinceId);
+        if (res.ok) {
+          const targetProvince = provinceById(state, provinceId);
+          log.push(`${faction.name} sabotea en secreto la guarnición de ${targetProvince?.name ?? provinceId}.`);
         }
       }
     }

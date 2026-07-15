@@ -329,9 +329,9 @@ describe('getTechModifiers', () => {
 describe('TECHS (banco de contenido)', () => {
   const all = Object.values(TECHS);
 
-  it('tiene entre 20 y 25 tecnologías', () => {
+  it('tiene entre 20 y 32 tecnologías (20-25 de v1 + ~8 de era 3, Fase 3 — AGENTE W)', () => {
     expect(all.length).toBeGreaterThanOrEqual(20);
-    expect(all.length).toBeLessThanOrEqual(25);
+    expect(all.length).toBeLessThanOrEqual(32);
   });
 
   it('cada entrada usa su propio id como clave, y los ids son únicos', () => {
@@ -339,10 +339,10 @@ describe('TECHS (banco de contenido)', () => {
     expect(new Set(all.map(t => t.id)).size).toBe(all.length);
   });
 
-  it('solo usa las 3 ramas del alcance v1 y las eras 1|2', () => {
+  it('solo usa las 3 ramas del alcance v1 y las eras 1|2|3 (era 3 llegó en Fase 3, AGENTE W)', () => {
     for (const t of all) {
       expect(['militar', 'economia', 'estado']).toContain(t.branch);
-      expect([1, 2]).toContain(t.era);
+      expect([1, 2, 3]).toContain(t.era);
     }
   });
 
@@ -392,14 +392,17 @@ describe('TECHS (banco de contenido)', () => {
     }
   });
 
-  it('los costes respetan las bandas del GDD (era 1 ~30-50, era 2 ~70-110)', () => {
+  it('los costes respetan las bandas del GDD (era 1 ~30-50, era 2 ~70-110, era 3 ~130-180 — AGENTE W)', () => {
     for (const t of all) {
       if (t.era === 1) {
         expect(t.cost).toBeGreaterThanOrEqual(30);
         expect(t.cost).toBeLessThanOrEqual(50);
-      } else {
+      } else if (t.era === 2) {
         expect(t.cost).toBeGreaterThanOrEqual(70);
         expect(t.cost).toBeLessThanOrEqual(110);
+      } else {
+        expect(t.cost).toBeGreaterThanOrEqual(130);
+        expect(t.cost).toBeLessThanOrEqual(180);
       }
     }
   });

@@ -22,6 +22,20 @@
  * abajo sí cubre el caso de que la guerra termine (paz) o la provincia
  * cambie de dueño por otra vía mientras el cerco sigue abierto: se levanta
  * solo, sin crash.
+ *
+ * ---------------------------------------------------------------------------
+ * AGENTE W (Fase 3, GDD §9.2 "las máquinas de asedio abren brechas que
+ * convierten el asalto en batalla campal dentro de la ciudadela"): añade
+ * `siegeEngineBonus` (aditivo, ver más abajo) y lo integra en dos sitios:
+ *  - `tickSieges`: cada catapulta presente en la hueste sitiadora acelera el
+ *    hambre de la guarnición (provisiones extra perdidas por turno).
+ *  - `assaultSiege`: las catapultas presentes abren "brecha" — bajan el
+ *    `fortLevel` efectivo SOLO para ese asalto. Es un ajuste TEMPORAL sobre
+ *    `province.settlement.fortLevel` (nunca se muta permanentemente): se
+ *    aplica justo antes de `resolveBattleAt` (que lee `fortLevel` en vivo
+ *    para el bono de fortificación del defensor) y se restaura en un
+ *    `finally`, así que sobrevive incluso si `resolveBattleAt` lanzara.
+ * ---------------------------------------------------------------------------
  */
 import type {
   Army, ArmyId, BattleReport, FactionId, GameState, Province, ProvinceId, Siege,
@@ -38,6 +52,14 @@ const PROVISIONS_LOSS = 120;
 const PROVISIONS_LOSS_WINTER = 180;
 const ATTRITION_PCT = 0.02;
 const ATTRITION_PCT_WINTER = 0.04;
+
+// ---------- máquinas de asedio (Fase 3, GDD §9.2, AGENTE W) ----------
+/** tope de catapultas que cuentan para el bono: dos ingenios ya son un tren de asedio completo. */
+const SIEGE_ENGINE_MAX_UNITS = 2;
+/** provisiones extra perdidas por turno, por catapulta (hasta el tope de arriba). */
+const SIEGE_ENGINE_PROVISIONS_PER_UNIT = 40;
+/** catapultas necesarias por cada nivel de fortificación que se reduce en el asalto ("brecha"). */
+const SIEGE_ENGINE_PER_BREACH_LEVEL = 2;
 
 // ---------- helpers internos ----------
 
@@ -91,6 +113,27 @@ function applyAttrition(state: GameState, armyIds: ArmyId[], pct: number): void 
     army.units = army.units.filter(u => u.men > 0);
     if (army.units.length === 0) delete state.armies[armyId];
   }
+}
+
+/**
+ * Cuenta catapultas vivas (unidad 'catapulta', men>0) entre los ejércitos
+ * sitiadores de `siege` que estén FÍSICAMENTE presentes en la provincia
+ * sitiada ahora mismo (no se fía a ciegas de `besiegerArmyIds`: un ejército
+ * pudo moverse o desaparecer entre llamadas). Tope `SIEGE_ENGINE_MAX_UNITS`:
+ * dos ingenios ya son un tren de asedio completo, más no acelera ni abre más
+ * brecha. Pura, no muta nada — la usan tanto `tickSieges` (acelera el hambre)
+ * como `assaultSiege` (abre brecha en la fortificación para ese asalto).
+ */
+export function siegeEngineBonus(state: GameState, siege: Siege): number {
+  let count = 0;
+  for (const armyId of siege.besiegerArmyIds) {
+    const army = state.armies[armyId];
+    if (!army || army.provinceId !== siege.provinceId) continue;
+    for (const u of army.units) {
+      if (u.men > 0 && u.typeId === 'catapulta') count += 1;
+    }
+  }
+  return Math.min(SIEGE_ENGINE_MAX_UNITS, count);
 }
 
 // ---------- API pública ----------
@@ -197,6 +240,17 @@ export function tickSieges(state: GameState, rng: Rng): string[] {
 
     siege.provisions -= provisionsLoss;
 
+    // Máquinas de asedio (Fase 3, GDD §9.2): cada catapulta presente acelera
+    // el hambre de la guarnición (tope SIEGE_ENGINE_MAX_UNITS: dos ingenios
+    // ya son un tren de asedio completo).
+    const engines = siegeEngineBonus(state, siege);
+    if (engines > 0) {
+      siege.provisions -= engines * SIEGE_ENGINE_PROVISIONS_PER_UNIT;
+      if (involvesPlayer) {
+        messages.push(`Los ingenios de asedio ante ${province.name} devoran las provisiones de la guarnición más deprisa.`);
+      }
+    }
+
     if (siege.provisions <= 0) {
       const turnsElapsed = Math.max(1, state.turn - siege.startedTurn);
       const siegeFlavor = `tras ${turnsElapsed} estación${turnsElapsed === 1 ? '' : 'es'} de cerco, `
@@ -241,14 +295,36 @@ export function assaultSiege(state: GameState, rng: Rng, siegeId: string): Actio
     return { ok: false, message: `No quedan huestes propias en ${province.name} para dar el asalto.` };
   }
 
-  const battle = resolveBattleAt(state, rng, siege.attackerFactionId, siege.provinceId);
+  // Máquinas de asedio (Fase 3, GDD §9.2): las catapultas presentes abren
+  // "brecha" — bajan el fortLevel efectivo SOLO para este asalto (1 nivel
+  // por cada SIEGE_ENGINE_PER_BREACH_LEVEL catapultas). Ajuste TEMPORAL: se
+  // aplica antes de `resolveBattleAt` (que lee `province.settlement.fortLevel`
+  // en vivo para el bono de fortificación del defensor) y se restaura en
+  // `finally` pase lo que pase — la muralla sigue en pie tras el asalto,
+  // ganado o perdido; nunca se degrada de forma permanente por esta vía.
+  const engines = siegeEngineBonus(state, siege);
+  const breach = Math.floor(engines / SIEGE_ENGINE_PER_BREACH_LEVEL);
+  const originalFortLevel = province.settlement.fortLevel;
+  let battle: BattleReport;
+  try {
+    if (breach > 0) {
+      province.settlement.fortLevel = Math.max(0, originalFortLevel - breach) as 0 | 1 | 2 | 3;
+    }
+    battle = resolveBattleAt(state, rng, siege.attackerFactionId, siege.provinceId);
+  } finally {
+    province.settlement.fortLevel = originalFortLevel;
+  }
+
+  const breachFlavor = breach > 0
+    ? ' Las catapultas abrieron brecha en la muralla antes del choque.'
+    : '';
 
   if (battle.winner === 'attacker') {
     if (province.ownerId !== siege.attackerFactionId) {
       occupyProvince(state, siege.attackerFactionId, province);
     }
     liftSiege(state, siegeId);
-    return { ok: true, message: `El asalto rompe las murallas de ${province.name}: la plaza cae.`, battle };
+    return { ok: true, message: `El asalto rompe las murallas de ${province.name}: la plaza cae.${breachFlavor}`, battle };
   }
 
   siege.besiegerArmyIds = armiesPresent(state, siege.besiegerArmyIds, siege.provinceId);
@@ -256,13 +332,13 @@ export function assaultSiege(state: GameState, rng: Rng, siegeId: string): Actio
     liftSiege(state, siegeId);
     return {
       ok: true,
-      message: `El asalto a ${province.name} fracasa y la hueste sitiadora es rechazada del todo: el cerco se levanta.`,
+      message: `El asalto a ${province.name} fracasa y la hueste sitiadora es rechazada del todo: el cerco se levanta.${breachFlavor}`,
       battle,
     };
   }
   return {
     ok: true,
-    message: `El asalto a ${province.name} fracasa: el cerco continúa, exhausto pero firme.`,
+    message: `El asalto a ${province.name} fracasa: el cerco continúa, exhausto pero firme.${breachFlavor}`,
     battle,
   };
 }

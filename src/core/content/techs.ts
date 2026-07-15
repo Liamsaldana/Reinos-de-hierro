@@ -228,4 +228,70 @@ export const TECHS: Record<TechId, TechDef> = {
     branch: 'estado', era: 2, cost: 75, requires: ['administracion_condal', 'erudicion', 'leyes_escritas'],
     effects: { opinionFlat: 5 },
   },
+
+  // ======================================================================
+  // ERA 3 — Alta Edad Media tardía (Fase 3, GDD §11.1, §11 "sin pólvora
+  // jamás"): cada tecnología exige TODAS las de era 2 ya definidas en su
+  // propia rama (ver cabecera del archivo). AGENTE W.
+  // ======================================================================
+  acero_de_forja_fria: {
+    id: 'acero_de_forja_fria',
+    name: 'Acero de Forja Fría',
+    blurb: 'Se templa el filo en agua de manantial hasta que canta como una campana: dicen los veteranos que iguala al mismísimo acero de las viejas leyendas — y puede que, esta vez, no exageren tanto.',
+    branch: 'militar', era: 3, cost: 140, requires: ['forja_veterana', 'doctrina_de_marcha'],
+    effects: { moraleFlat: 1 },
+  },
+  ballesta_pesada: {
+    id: 'ballesta_pesada',
+    name: 'Ballesta Pesada',
+    blurb: 'Armazón reforzado y gancho de acero para tensar el doble de fuerza: no arma a tropa nueva, pero cada ballestero veterano dispara con la confianza de otro siglo.',
+    branch: 'militar', era: 3, cost: 135, requires: ['forja_veterana', 'doctrina_de_marcha'],
+    effects: { moraleFlat: 1 },
+  },
+  logistica_de_campana: {
+    id: 'logistica_de_campana',
+    name: 'Logística de Campaña',
+    blurb: 'Depósitos de avanzada, relevos de carro y rutas de intendencia estudiadas palmo a palmo: la hueste marcha sin esperar a sus propios carros de grano.',
+    branch: 'militar', era: 3, cost: 150, requires: ['forja_veterana', 'doctrina_de_marcha'],
+    effects: { movementUp: 1 },
+  },
+  talla_de_vidrio_igneo: {
+    id: 'talla_de_vidrio_igneo',
+    name: 'Talla de Vidrio Ígneo',
+    blurb: 'Maestros venidos de las Fauces enseñan a tallar la obsidiana negra en puntas de lanza y flecha: un saber que hasta ahora solo interesaba a supersticiosos y coleccionistas.',
+    branch: 'militar', era: 3, cost: 130, requires: ['forja_veterana', 'doctrina_de_marcha'],
+    // SIN efecto mecánico propio a propósito: la capa mítica (Fase 3, GDD
+    // §2.5) la consulta por id EXACTO 'talla_de_vidrio_igneo' cuando aterrice
+    // (isTechDone(state, factionId, 'talla_de_vidrio_igneo')) — este banco
+    // solo certifica que la tecnología existe y es alcanzable.
+    effects: {},
+  },
+  banca_de_letras: {
+    id: 'banca_de_letras',
+    name: 'Banca de Letras',
+    blurb: 'Casas de cambio en cada gran feria emiten letras que valen tanto como el oro que prometen: el crédito mueve ejércitos tan bien como la plata contante.',
+    branch: 'economia', era: 3, cost: 160, requires: ['rutas_de_grano', 'ferias_francas', 'ingenieria_civil'],
+    effects: { taxMod: 1.15 },
+  },
+  caminos_reales: {
+    id: 'caminos_reales',
+    name: 'Caminos Reales',
+    blurb: 'Calzadas empedradas y postas cada jornada de camino unen mercado con mercado: cobrar peaje nunca fue tan fácil como cuando el camino mismo es tuyo.',
+    branch: 'economia', era: 3, cost: 145, requires: ['rutas_de_grano', 'ferias_francas', 'ingenieria_civil'],
+    effects: { taxMod: 1.05 },
+  },
+  cancilleria_mayor: {
+    id: 'cancilleria_mayor',
+    name: 'Cancillería Mayor',
+    blurb: 'Una cancillería permanente, con archivo propio y copistas de sobra, convierte cada tratado estudiado en la corte en una lección para el siguiente erudito.',
+    branch: 'estado', era: 3, cost: 170, requires: ['burocracia', 'levas_reales', 'cancilleria'],
+    effects: { researchMod: 1.2 },
+  },
+  ley_de_hierro: {
+    id: 'ley_de_hierro',
+    name: 'Ley de Hierro',
+    blurb: 'La leva deja de ser favor o costumbre: es ley escrita, con cupo fijo por aldea y castigo para quien la esquive. El reino nunca careció tanto de excusas.',
+    branch: 'estado', era: 3, cost: 155, requires: ['burocracia', 'levas_reales', 'cancilleria'],
+    effects: { manpowerMod: 1.1 },
+  },
 } as Record<TechId, TechDef>;
