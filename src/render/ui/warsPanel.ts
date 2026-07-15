@@ -12,9 +12,14 @@ import type { Rng } from '../../core/state/rng';
 import type { ActionResult } from '../../core/systems/actions';
 import { declareWar, negotiatePeace } from '../../core/systems/actions';
 import {
-  allianceRequirement, breakTreaty, formAlliance, marriageRequirement,
-  nonAggressionRequirement, proposeMarriage, signNonAggression,
+  allianceRequirement, breakTreaty, bribeOpinion, bribeOpinionRequirement, formAlliance,
+  marriageRequirement, nonAggressionRequirement, proposeMarriage, proposeVassalage,
+  signNonAggression, vassalageRequirement,
 } from '../../core/systems/diplomacy';
+import { proposeTradeTreaty, tradeRequirement } from '../../core/systems/trade';
+import {
+  sabotageGarrison, sabotageRequirement, scoutFaction, scoutRequirement,
+} from '../../core/systems/espionage';
 import { el, fmt, fmtSigned, clear, replaceChildren, type Child } from './dom';
 import { CASUS_BELLI_ES } from './format';
 import type { ToastStack } from './toast';
@@ -24,6 +29,8 @@ const TREATY_CHIP: Record<TreatyType, { icon: string; label: string }> = {
   marriage_tie: { icon: '💍', label: 'Lazo de sangre' },
   alliance: { icon: '🤝', label: 'Alianza' },
   non_aggression: { icon: '🕊', label: 'Pacto de no agresión' },
+  trade: { icon: '⚖', label: 'Tratado comercial' },
+  vassalage: { icon: '⛓', label: 'Vasallaje' },
 };
 
 export interface WarsPanel {
@@ -163,6 +170,23 @@ export function createWarsPanel(container: HTMLElement, store: GameStore, toast:
         (s, rng) => formAlliance(s, rng, playerId, otherId)),
       proposalBtn('Pacto de no agresión', nonAggressionRequirement(state, playerId, otherId),
         (s, rng) => signNonAggression(s, rng, playerId, otherId)),
+    ]));
+
+    // --- AGENTE U (Fase 3, GDD §10 "poder blando"): comercio, vasallaje, ---
+    // --- sobornos y agentes v1. Aditivo: caja diplomática existente intacta.
+    children.push(el('div', { className: 'diplo-actions' }, [
+      proposalBtn('Tratado comercial', tradeRequirement(state, playerId, otherId),
+        (s, rng) => proposeTradeTreaty(s, rng, playerId, otherId)),
+      proposalBtn('Sobornar (+opinión)', bribeOpinionRequirement(state, playerId, otherId),
+        (s, rng) => bribeOpinion(s, rng, playerId, otherId)),
+      proposalBtn('Exigir vasallaje', vassalageRequirement(state, playerId, otherId),
+        (s, rng) => proposeVassalage(s, rng, playerId, otherId)),
+    ]));
+    children.push(el('div', { className: 'diplo-actions' }, [
+      proposalBtn('Sabotear guarnición', sabotageRequirement(state, playerId, province.id),
+        (s, rng) => sabotageGarrison(s, rng, playerId, province.id)),
+      proposalBtn('Enviar espías', scoutRequirement(state, playerId, otherId),
+        (s, rng) => scoutFaction(s, rng, playerId, otherId)),
     ]));
 
     if (atWar) {

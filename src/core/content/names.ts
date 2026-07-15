@@ -1,10 +1,18 @@
 /**
  * Bancos de nombres (provincias, asentamientos, personajes) para la génesis
- * de partida (GDD §2.1 worldbuilding). Módulo INTERNO del Agente B — no forma
+ * de partida (GDD §2.1 worldbuilding). Módulo INTERNO del Agente T — no forma
  * parte del contrato público del core; solo lo consume newGame.ts/mapgen.ts.
  *
  * Todo nombre sale de listas curadas + combinatoria determinista vía Rng.
  * Nada de Math.random.
+ *
+ * Fase 3 (GDD §2.2): suma los bancos de personaje de sarradio y highland.
+ * NO suma pools de provincia nuevos: mapgen.ts mantiene las 6 zonas
+ * geográficas de siempre (norte/costa/sur/estepa/centro/fauces) sin crear
+ * una "región sarradia" o "región highland" separada — sus casas reclaman
+ * bloques dentro de esas mismas zonas (ver FACTION_SETUPS en newGame.ts), así
+ * que los pools NORTH/COAST/SOUTH/STEPPE/CENTER de abajo ya cubren toda la
+ * geografía y no hace falta contenido nuevo aquí.
  */
 import type { CultureId, Terrain } from '../types';
 import type { Rng } from '../state/rng';
@@ -104,9 +112,29 @@ export const ESTEPARA_NAMES: readonly string[] = [
   'Chulun', 'Tengis', 'Yesu', 'Qara',
 ];
 
+// Sarradio (Fase 3): levantino/mediterráneo. El "apellido" es un patronímico
+// fijo de la casa con partícula "ibn" (p.ej. "ibn Rakim" para Casa Al-Nasir),
+// igual de simplificado que Varga/Haraldsen: no se declina por género del
+// personaje (mismo criterio que el resto del banco — "Livia Varga" tampoco
+// declina 'Varga'). Da nombres como "Zahir ibn Rakim".
+export const SARRADIO_FIRST_NAMES: readonly string[] = [
+  'Zahir', 'Rashid', 'Tarik', 'Nadim', 'Karim', 'Malik', 'Idris', 'Faisal',
+  'Layla', 'Yasmin', 'Soraya', 'Amira', 'Nadia', 'Zaynab', 'Farida', 'Rania',
+];
+
+// Highland (Fase 3): celta/gaélico. El "apellido" es un patronímico de clan
+// fijo con partícula "mac" (p.ej. "mac Dougal" para Clan Mac Tíre), misma
+// simplificación que el resto del banco. Da nombres como "Ewan mac Dougal".
+export const HIGHLAND_FIRST_NAMES: readonly string[] = [
+  'Ewan', 'Duncan', 'Alasdair', 'Bran', 'Fergus', 'Angus', 'Callum', 'Lachlan',
+  'Moira', 'Ailsa', 'Iona', 'Sine', 'Isla', 'Morag', 'Brenna', 'Una',
+];
+
 export function firstNamePoolFor(cultureId: CultureId): readonly string[] {
   if (cultureId === 'aurelios') return AURELIOS_FIRST_NAMES;
   if (cultureId === 'norlander') return NORLANDER_FIRST_NAMES;
+  if (cultureId === 'sarradio') return SARRADIO_FIRST_NAMES;
+  if (cultureId === 'highland') return HIGHLAND_FIRST_NAMES;
   return ESTEPARA_NAMES;
 }
 

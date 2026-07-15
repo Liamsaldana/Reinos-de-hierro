@@ -48,6 +48,8 @@ export const CULTURE_ES_FALLBACK: Record<CultureId, string> = {
   aurelios: 'Aurelios',
   norlander: 'Norlander',
   estepara: 'Estepara',
+  sarradio: 'Sarradio',
+  highland: 'Highland',
 };
 
 export const CASUS_BELLI_ES: Record<CasusBelli, string> = {

@@ -13,7 +13,7 @@ export type FactionId = string;
 export type CharacterId = string;
 export type ArmyId = string;
 export type UnitTypeId = string;
-export type CultureId = 'aurelios' | 'norlander' | 'estepara';
+export type CultureId = 'aurelios' | 'norlander' | 'estepara' | 'sarradio' | 'highland';
 export type ReligionId = 'aureismo' | 'viejos_pactos' | 'calculo';
 
 // ---------- mundo ----------
@@ -56,6 +56,10 @@ export interface Province {
   garrison: number;
   /** fe dominante de la provincia (Fase 2; opcional: v1 no lo serializaba) */
   religionId?: ReligionId;
+  /** bien de lujo local (Fase 3, comercio) */
+  luxury?: LuxuryId | null;
+  /** obsidiana de las Fauces: hiere de verdad a los Pálidos (Fase 3, GDD §2.5) */
+  vidrioIgneo?: boolean;
   /** edificios construidos (Fase 2, GDD §9.1) */
   buildings?: BuildingId[];
   /** obra en curso (una por provincia) */
@@ -163,7 +167,10 @@ export interface Army {
 }
 
 // ---------- diplomacia y guerra ----------
-export type TreatyType = 'alliance' | 'non_aggression' | 'marriage_tie';
+export type TreatyType = 'alliance' | 'non_aggression' | 'marriage_tie' | 'trade' | 'vassalage';
+
+/** bienes de lujo (Fase 3, GDD §5.1) */
+export type LuxuryId = 'sal' | 'seda' | 'especias' | 'vino';
 
 export interface DiploRelation {
   opinion: number; // -100..100
@@ -187,7 +194,10 @@ export interface War {
 }
 
 // ---------- facciones ----------
-export type AIArchetype = 'player' | 'consolidated' | 'ambitious' | 'tribal';
+export type AIArchetype =
+  | 'player' | 'consolidated' | 'ambitious' | 'tribal'
+  | 'imperial'  // Remanente Imperial (Fase 3, antagonista tardío)
+  | 'palidos';  // la hueste de los Yermos (Fase 3, capa mítica — no negocia)
 
 export interface Faction {
   id: FactionId;
@@ -210,6 +220,36 @@ export interface Faction {
   alive: boolean;
   /** investigación (Fase 2; opcional: v1 no lo serializaba) */
   research?: ResearchState;
+  /** señor feudal si esta casa es vasalla (Fase 3, GDD §10) */
+  vassalOfId?: FactionId | null;
+}
+
+// ---------- capa mítica (Fase 3, GDD §2.5) ----------
+/** arma nombrada de acero estelar: objeto del mundo, se hereda, se pierde, se recupera */
+export interface NamedWeapon {
+  id: string;
+  name: string; // "Alba de Invierno", con sabor
+  /** quién la porta (null = perdida en el campo o sin dueño) */
+  bearerCharacterId: CharacterId | null;
+  /** provincia donde yace si nadie la porta */
+  lostInProvinceId?: ProvinceId | null;
+  /** bono de mando al héroe portador */
+  bonusMartial: number;
+}
+
+export interface MythicState {
+  /** severidad acumulada de los inviernos (los presagios crecen con ella) */
+  winterSeverity: number;
+  /** presagios ya narrados (índice de la cadena de sucesos del norte) */
+  presagios: number;
+  /** la Larga Escarcha ha comenzado: los Pálidos marchan */
+  escarchaActive: boolean;
+  escarchaStartedTurn?: number;
+  /** la Gran Tregua está sellada entre las casas vivas */
+  granTregua: boolean;
+  namedWeapons: NamedWeapon[];
+  /** ejércitos equipados con puntas de vidrio ígneo (hieren a los Pálidos) */
+  vidrioArmies?: ArmyId[];
 }
 
 // ---------- batalla (auto-resolución, GDD §8.4) ----------
@@ -264,9 +304,15 @@ export interface GameState {
   /** último parte de batalla para mostrar en UI; no persiste significado */
   lastBattle: BattleReport | null;
   /** condición de fin de partida */
-  outcome: 'ongoing' | 'victory_conquest' | 'defeat_extinction' | 'defeat_conquered';
+  outcome:
+    | 'ongoing' | 'victory_conquest' | 'defeat_extinction' | 'defeat_conquered'
+    | 'victory_larga_noche' | 'victory_restauracion' | 'victory_hegemonia' | 'defeat_palidos';
   /** asedios activos (Fase 2; opcional: v1 no lo serializaba) */
   sieges?: Siege[];
+  /** capa mítica (Fase 3; opcional: saves previos siguen válidos) */
+  mythic?: MythicState;
+  /** turnos consecutivos que el jugador lleva siendo la mayor potencia (victoria por hegemonía) */
+  hegemonyStreakPlayer?: number;
 }
 
 // ---------- helpers derivados (puros) ----------

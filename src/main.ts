@@ -11,6 +11,7 @@ import { initEventFlow } from './game/eventFlow';
 import { initCastleFlow } from './game/castleFlow';
 import { initSiegePanel } from './render/ui/siegePanel';
 import { initTechPanel } from './render/ui/techPanel';
+import { initNortePanel } from './render/ui/nortePanel';
 import type { GameState } from './core/types';
 
 let world: WorldScene | null = null;
@@ -53,3 +54,4 @@ initEventFlow(store);
 initCastleFlow(store);
 initSiegePanel(store, () => world);
 initTechPanel(store);
+initNortePanel(store);
